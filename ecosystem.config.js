@@ -5,8 +5,9 @@ module.exports = {
       script: "./src/index.js",
       cwd: __dirname,
       instances: 1,
+      restart_delay: 2000,
       autorestart: true,
-      watch: ["src", "bot"],
+      watch: false,
       ignore_watch: ["node_modules", "docs", "scripts"],
       max_memory_restart: "200M",
       env: {

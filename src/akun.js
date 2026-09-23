@@ -1,6 +1,6 @@
 "use strict";
 
-const { getHTML } = require("./konterApi");
+const { getHTML, request } = require("./konterApi");
 
 function cleanSaldo(v) {
   return v.replace(/\s*Tambah Saldo.*$/i, "").trim();
@@ -94,14 +94,20 @@ async function getHistoryDetail(id) {
     status: r.status,
     id,
     jenisProduk: kv["Jenis Produk"] || "",
+    provider: kv["Provider"] || "",
     paket: kv["Paket"] || "",
     nominal: kv["Nominal"] || "",
+    idPelanggan: kv["ID Pelanggan"] || "",
     noHp: kv["Nomor HP"] || "",
     harga: kv["Harga"] || "",
     pembayaran: kv["Pembayaran"] || "",
     tanggal: kv["Tanggal Pembelian"] || "",
+    tanggalBayar: kv["Tanggal Pembayaran"] || "",
     statusPembayaran: kv["Status Pembayaran"] || "",
     statusPengisian: kv["Status Pengisian"] || "",
+    snRef: kv["SN/Ref"] || kv["No Resi"] || kv["No Referensi"] || kv["Referensi"] || "",
+    token: kv["Token"] || "",
+    keterangan: kv["Keterangan"] || "",
   };
 }
 
@@ -148,4 +154,143 @@ async function getMutasi(limit = 5) {
   return { status: r.status, rows };
 }
 
-module.exports = { getProfil, getHistory, getHistoryDetail, getPaymentQr, getMutasi };
+module.exports = {
+  getProfil,
+  getHistory,
+  getHistoryDetail,
+  getPaymentQr,
+  getMutasi,
+  getDeposit,
+  getDepositMethods,
+  getDepositDetail,
+  getDepositQr,
+  createDeposit,
+};
+
+/* ==================== deposit ==================== */
+
+function parseDepositTable(html) {
+  const rows = [];
+  const trRe = /<tr>([\s\S]*?)<\/tr>/g;
+  let tr;
+  while ((tr = trRe.exec(html))) {
+    const tds = [...tr[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)].map((x) => x[1]);
+    if (tds.length < 4) continue;
+    const idM = tds[0].match(/\/akun\/deposit\/view\/(\d+)/);
+    rows.push({
+      id: idM ? idM[1] : "",
+      tanggal: stripTags(tds[0]),
+      jumlah: stripTags(tds[1]),
+      metode: stripTags(tds[2]),
+      status: stripTags(tds[3]),
+    });
+  }
+  return rows;
+}
+
+async function getDeposit(limit = 10) {
+  const r = await getHTML("/akun/deposit");
+  return { status: r.status, rows: parseDepositTable(r.text).slice(0, limit) };
+}
+
+async function getDepositMethods() {
+  const r = await getHTML("/akun/deposit");
+  const t = r.text || "";
+  const csrfM = t.match(/name="csrf_token"\s+value="([^"]*)"/);
+  const selM = t.match(/<select[^>]*name="payment"[^>]*>([\s\S]*?)<\/select>/);
+  const methods = [];
+  if (selM) {
+    const opts = [...selM[1].matchAll(/<option\b[^>]*value="([^"]*)"[^>]*>([\s\S]*?)<\/option>/g)];
+    for (const o of opts) {
+      const value = o[1];
+      if (!value || /^https?:/i.test(value)) continue;
+      methods.push({ value, label: stripTags(o[2]) });
+    }
+  }
+  return { status: r.status, csrf: csrfM ? csrfM[1] : "", methods };
+}
+
+async function getDepositDetail(id) {
+  const r = await getHTML("/akun/deposit/view/" + encodeURIComponent(id));
+  const kv = parseKeyValueTable(r.text);
+  return {
+    http: r.status,
+    id,
+    tanggal: kv["Tanggal"] || "",
+    jumlah: kv["Jumlah"] || "",
+    metode: kv["Metode Pembayaran"] || kv["Pembayaran"] || "",
+    status: kv["Status"] || "",
+  };
+}
+
+async function getDepositQr(depId) {
+  const view = await getHTML("/akun/deposit/view/" + encodeURIComponent(depId));
+  const t = view.text || "";
+  const m = t.match(/\/payment\/[^"']*get_qr\/(\d+)/) || t.match(/get_qr\/(\d+)/);
+  if (!m) return { ok: false, error: "QR belum tersedia untuk deposit ini." };
+  const session = m[1];
+  const qr = await getHTML("/payment/qris_livin_nt/get_qr/" + session);
+  const qt = qr.text || "";
+  if (/^ERROR/.test(qt)) return { ok: false, error: qt.slice(0, 160) };
+  let buffer = null;
+  try {
+    buffer = Buffer.from(qt, "base64");
+  } catch (e) {
+    buffer = null;
+  }
+  return { ok: !!buffer && buffer.length > 100, buffer, error: buffer ? "" : "QR belum siap." };
+}
+
+async function createDeposit({ amount, payment, csrfToken } = {}) {
+  const pre = await getDepositMethods();
+  const csrf = csrfToken || pre.csrf;
+  const res = await request("POST", "/akun/deposit", {
+    form: {
+      csrf_token: csrf,
+      amount: String(amount),
+      payment,
+      submit: "deposit",
+    },
+  });
+  const status = res.status;
+  const location = res.headers.get ? res.headers.get("location") : "";
+  let body = "";
+  try {
+    body = await res.text();
+  } catch (e) {
+    body = "";
+  }
+  let id = "";
+  let detail = null;
+  let qr = null;
+  try {
+    const list = await getDeposit(1);
+    id = list.rows[0] ? list.rows[0].id : "";
+  } catch (e) {
+    id = "";
+  }
+  if (id) {
+    try {
+      detail = await getDepositDetail(id);
+    } catch (e) {
+      detail = null;
+    }
+    try {
+      qr = await getDepositQr(id);
+    } catch (e) {
+      qr = { ok: false, error: e.message };
+    }
+  }
+  const ok = /^30\d$/.test(String(status)) || !!id;
+  let message = "";
+  if (!ok && body) {
+    const plain = stripTags(body).replace(/\s+/g, " ").trim();
+    const keep = ["gagal", "minimal", "maksimum", "deposit", "csrf", "sesi", "login", "invalid", "tidak", "nominal"].filter((k) => new RegExp(k, "i").test(plain));
+    if (keep.length) message = plain.slice(0, 220);
+    if (!keep.length && body.includes("<title>")) {
+      const tm = body.match(/<title>([\s\S]*?)<\/title>/);
+      message = tm ? tm[1] : "";
+    }
+  }
+  return { ok, status, location, id, detail, qr, message };
+}
