@@ -154,12 +154,44 @@ async function getMutasi(limit = 5) {
   return { status: r.status, rows };
 }
 
+async function getNotifikasi(limit = 10) {
+  const r = await getHTML("/akun/notifikasi");
+  const t = r.text || "";
+  const items = [];
+  const re = /<a\s[^>]*href="[^"]*\/akun\/notifikasi\/read\/(\d+)"[^>]*class="list-group-item"[^>]*>([\s\S]*?)<\/a>/g;
+  let m;
+  while ((m = re.exec(t))) {
+    const id = m[1];
+    const inner = m[2];
+    const headM = inner.match(/<h5[^>]*class="list-group-item-heading"[^>]*>([\s\S]*?)<\/h5>/);
+    const textM = inner.match(/<p[^>]*class="list-group-item-text"[^>]*>([\s\S]*?)<\/p>/);
+    const head = headM ? headM[1] : "";
+    const unread = /data-title="Belum dibaca"/.test(head);
+    const waktuM = head.match(/<small>([^<]*)<\/small>/);
+    const waktu = waktuM ? waktuM[1].trim() : "";
+    const judul = head
+      .replace(/\(\s*<small>[\s\S]*?<\/small>\s*\)/g, "")
+      .replace(/<i[\s\S]*?<\/i>/g, "")
+      .replace(/<small>[\s\S]*?<\/small>/g, "")
+      .replace(/<[^>]+>/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    const teks = textM
+      ? textM[1].replace(/<br\s*\/?>/g, "\n").replace(/<[^>]+>/g, "").replace(/[ \t]+/g, " ").trim()
+      : "";
+    items.push({ id, judul, waktu, teks, unread });
+    if (items.length >= limit) break;
+  }
+  return { status: r.status, items };
+}
+
 module.exports = {
   getProfil,
   getHistory,
   getHistoryDetail,
   getPaymentQr,
   getMutasi,
+  getNotifikasi,
   getDeposit,
   getDepositMethods,
   getDepositDetail,

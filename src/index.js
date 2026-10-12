@@ -384,7 +384,7 @@ function confirmButton(id) {
 /* ==================== Menu utama + reply keyboard ==================== */
 
 const HELP_NORMAL = [
-  "🤖 *Bot KonterKuota*",
+  "🤖 *Bot KonterPulsa*",
   "",
   "Perintah:",
   "• /menu — tampilkan menu utama",
@@ -400,7 +400,7 @@ const HELP_NORMAL = [
 ].join("\n");
 
 const HELP_ADMIN = [
-  "🤖 *Bot KonterKuota*",
+  "🤖 *Bot KonterPulsa*",
   "",
   "Perintah:",
   "• /menu — tampilkan menu utama",
@@ -408,6 +408,7 @@ const HELP_ADMIN = [
   "• /saldo — cek saldo & info akun",
   "• /riwayat `[n]` — riwayat transaksi (default 5)",
   "• /mutasi `[n]` — mutasi saldo",
+  "• /notifikasi — notifikasi status order terbaru",
   "• /deposit — riwayat deposit & buat deposit (top-up)",
   "• /order — mulai transaksi",
   "• /batal — batalkan proses order",
@@ -423,6 +424,7 @@ function mainMenuRows(admin) {
   rows.push([{ text: "📋 Riwayat", data: "menu:riwayat" }, { text: "➕ Deposit", data: "menu:deposit" }]);
   if (admin) {
     rows.push([{ text: "💰 Saldo Saya", data: "menu:saldo" }, { text: "🧾 Mutasi", data: "menu:mutasi" }]);
+    rows.push([{ text: "🔔 Notifikasi", data: "menu:notifikasi" }]);
   }
   rows.push([{ text: "❓ Bantuan", data: "menu:bantuan" }]);
   return rows;
@@ -435,6 +437,7 @@ function replyKeyboardKeys(admin) {
   ];
   if (admin) {
     rows.push(["💰 Saldo Akun", "🧾 Mutasi"]);
+    rows.push(["🔔 Notifikasi"]);
   }
   rows.push(["❓ Bantuan"]);
   return rows;
@@ -453,7 +456,7 @@ function replyKeyboardMarkup(admin) {
 
 async function showMainMenu(chatId, label) {
   const admin = isAllowed(chatId);
-  const text = label || "🤖 *Menu Utama — KonterKuota*";
+  const text = label || "🤖 *Menu Utama — KonterPulsa*";
   return bot.sendMessage(chatId, text, {
     parse_mode: "Markdown",
     ...inlineButtons(mainMenuRows(admin)),
@@ -478,7 +481,7 @@ bot.onText(/^\/menu$/, (msg) => showMainMenu(msg.chat.id));
 
 async function handleCari(msg, q) {
   if (!q) {
-    await reply(msg, "Gunakan: /harga `<kata>`\nContoh: `/harga axis 5` atau `/harga 10 gb telkomsel`\n\nMencari dari katalog produk konterkuota (tanpa login).", { parse_mode: "Markdown" });
+    await reply(msg, "Gunakan: /harga `<kata>`\nContoh: `/harga axis 5` atau `/harga 10 gb telkomsel`\n\nMencari dari katalog produk KonterPulsa (tanpa login).", { parse_mode: "Markdown" });
     return showMainMenu(msg.chat.id);
   }
   const chatId = msg.chat.id;
@@ -682,6 +685,114 @@ async function doMutasi(msg, m) {
   }
 }
 bot.onText(/^\/mutasi(?:\s+(\d+))?$/, guard(doMutasi));
+
+/* ==================== Notifikasi (admin + push otomatis) ==================== */
+
+async function doNotifikasi(msg) {
+  const chatId = msg.chat.id;
+  chatAction(chatId);
+  const wait = await reply(msg, "Mengambil notifikasi...");
+  try {
+    const { status, items } = await akun.getNotifikasi(10);
+    if (wait && wait.message_id) await bot.deleteMessage(chatId, wait.message_id).catch(() => {});
+    if (status !== 200) return reply(msg, "Gagal (status " + status + "). Cek sesi login.");
+    if (!items.length) return reply(msg, "Belum ada notifikasi.");
+    const parts = items.map((n, i) => {
+      const icon = n.unread ? "🔵" : "▫️";
+      return (
+        (i + 1) + ". " + icon + " <b>" + escHtml(n.judul) + "</b>\n" +
+        "📅 " + escHtml(n.waktu) + "\n" +
+        "<blockquote>" + escHtml(n.teks.slice(0, 400)) + "</blockquote>"
+      );
+    });
+    let text = "🔔 <b>Notifikasi Terbaru</b>\n\n" + parts.join("\n\n");
+    if (text.length > 4000) text = text.slice(0, 4000);
+    return reply(msg, text, { parse_mode: "HTML" });
+  } catch (e) {
+    return reply(msg, "Gagal mengambil notifikasi: " + e.message);
+  }
+}
+
+bot.onText(/^\/notifikasi$/, guard(doNotifikasi));
+
+const SEEN_NOTIF_FILE = path.join(__dirname, "..", "data", "seen_notif.json");
+const NOTIF_POLL_INTERVAL = 3 * 60 * 1000;
+let notifSeen = new Set();
+let notifBaselineReady = false;
+
+function loadSeenNotif() {
+  try {
+    return new Set(JSON.parse(fs.readFileSync(SEEN_NOTIF_FILE, "utf8")).map(String));
+  } catch (e) {
+    return null;
+  }
+}
+
+function saveSeenNotif() {
+  try {
+    fs.mkdirSync(path.dirname(SEEN_NOTIF_FILE), { recursive: true });
+    fs.writeFileSync(SEEN_NOTIF_FILE, JSON.stringify([...notifSeen]));
+  } catch (e) {}
+}
+
+function notifStatusIcon(t) {
+  if (/SUKSES|berhasil/i.test(t)) return "✅";
+  if (/GAGAL|ditolak|dibatalkan/i.test(t)) return "❌";
+  if (/diproses|diterima|menunggu/i.test(t)) return "⏳";
+  return "🔔";
+}
+
+async function notifBaseline() {
+  try {
+    const r = await akun.getNotifikasi(50);
+    for (const n of r.items || []) notifSeen.add(String(n.id));
+    notifBaselineReady = true;
+    saveSeenNotif();
+    console.log("[NOTIF] baseline " + notifSeen.size + " notifikasi lama ditandai (tanpa push)");
+  } catch (e) {
+    console.log("[NOTIF] baseline gagal, coba lagi di siklus berikutnya: " + e.message);
+  }
+}
+
+async function pollNotifikasi() {
+  if (!notifBaselineReady) return notifBaseline();
+  let items = [];
+  try {
+    const r = await akun.getNotifikasi(20);
+    items = r.items || [];
+  } catch (e) {
+    return;
+  }
+  const fresh = items.filter((n) => !notifSeen.has(String(n.id)));
+  if (!fresh.length) return;
+  for (const n of fresh) notifSeen.add(String(n.id));
+  saveSeenNotif();
+  for (const n of fresh) {
+    if (!/status order/i.test(n.judul)) continue;
+    const tm = (n.judul + " " + n.teks).match(/#(\d{4,})/);
+    if (!tm) continue;
+    const entry = ledger.get(tm[1]);
+    if (!entry || !entry.chat) continue;
+    const text =
+      notifStatusIcon(n.teks) + " <b>Update Transaksi</b>\n" +
+      "📦 Trx <b>#" + escHtml(tm[1]) + "</b> — " + escHtml(n.waktu) + "\n" +
+      "<blockquote>" + escHtml(n.teks.slice(0, 600)) + "</blockquote>";
+    bot.sendMessage(entry.chat, text, { parse_mode: "HTML" }).catch(() => {});
+    console.log("[NOTIF] push trx #" + tm[1] + " -> chat " + entry.chat);
+  }
+}
+
+(function initNotifPoll() {
+  const loaded = loadSeenNotif();
+  if (loaded && loaded.size) {
+    notifSeen = loaded;
+    notifBaselineReady = true;
+    console.log("[NOTIF] seen dipuat: " + notifSeen.size + " id dari disk");
+  } else {
+    notifBaseline();
+  }
+  setInterval(pollNotifikasi, NOTIF_POLL_INTERVAL);
+})();
 
 /* ==================== /deposit (riwayat + buat deposit, admin) ==================== */
 
@@ -989,6 +1100,7 @@ bot.on("callback_query", (q) => {
     if (data === "menu:saldo") return guard(doSaldo)(q.message);
     if (data === "menu:riwayat") return doRiwayat(q.message);
     if (data === "menu:mutasi") return guard(doMutasi)(q.message);
+    if (data === "menu:notifikasi") return guard(doNotifikasi)(q.message);
     if (data === "back:kategori") return handleBackKategori(chatId, q.message, st);
     if (data === "back:operator") return handleBackOperator(chatId, q.message, st);
     if (data === "menu:order") return doOrder(q.message);
@@ -1383,6 +1495,7 @@ const REPLY_ACTION = {
   "💰 Saldo Akun": (msg) => guard(doSaldo)(msg),
   "📋 Riwayat": (msg) => doRiwayat(msg),
   "🧾 Mutasi": (msg) => guard(doMutasi)(msg),
+  "🔔 Notifikasi": (msg) => guard(doNotifikasi)(msg),
   "🛒 Order": (msg) => doOrder(msg),
   "➕ Deposit": (msg) => doDeposit(msg),
   "❓ Bantuan": async (msg) => {
