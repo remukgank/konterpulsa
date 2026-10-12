@@ -932,6 +932,72 @@ function orderMenuRows(cfg) {
   );
 }
 
+function brandOf(name) {
+  const n = (name || "").toLowerCase();
+  if (n.includes("axis")) return "Axis";
+  if (n.includes("indosat") || n.includes("freedom")) return "Indosat";
+  if (n.includes("smartfren")) return "Smartfren";
+  if (n.includes("telkomsel")) return "Telkomsel";
+  if (n.includes("three")) return "Three";
+  if (n.includes("by.u")) return "by.U";
+  if (n.includes("xl")) return "XL";
+  return "Lainnya";
+}
+
+function brandIcon(b) {
+  return { Axis: "🟢", Indosat: "🟡", Smartfren: "⚪", Telkomsel: "🟠", Three: "🔵", XL: "🟣", "by.U": "🔷", Lainnya: "▫️" }[b] || "▫️";
+}
+
+function brandGroupsFor(cat) {
+  const groups = {};
+  Object.entries(cat.operators || {}).forEach(([id, name]) => {
+    const b = brandOf(name);
+    (groups[b] = groups[b] || []).push(id);
+  });
+  return groups;
+}
+
+function renderBrands(msg, st) {
+  const cfg = st.cfg;
+  const cat = order.categoryByKey(cfg, st.order.kategori);
+  if (!cat) return reply(msg, "Kategori tidak ditemukan.");
+  const groups = st.opGroups || brandGroupsFor(cat);
+  st.opGroups = groups;
+  const rows = Object.keys(groups).map((b) => [{ text: brandIcon(b) + " " + b + " (" + groups[b].length + ")", data: "brand:" + b }]);
+  rows.push([{ text: "⬅️ Kategori", data: "back:kategori" }]);
+  return flowEdit(msg, st, `Kategori *${cat.label.trim()}*\nPilih *merek*:`, rows);
+}
+
+function renderProviderList(msg, st, opIds, backTo, notice) {
+  const cfg = st.cfg;
+  const rows = chunk(opIds.map((id) => ({ text: cfg.operators[id] || id, data: "op:" + id })), 2);
+  const back = backTo === "brand" ? { text: "⬅️ Merek", data: "back:brand" } : { text: "⬅️ Kategori", data: "back:kategori" };
+  rows.push([back]);
+  const cat = order.categoryByKey(cfg, st.order.kategori);
+  const head = notice ? notice + "\n" : "";
+  const title =
+    backTo === "brand" && st.order.brand
+      ? `${head}Merek *${st.order.brand}*\nPilih *provider* (${opIds.length}):`
+      : `${head}Kategori *${(cat && cat.label.trim()) || ""}*\nPilih *provider* (${opIds.length}):`;
+  return flowEdit(msg, st, title, rows);
+}
+
+async function handleBrandPick(chatId, msg, st, brand) {
+  const groups = st.opGroups || {};
+  const ids = groups[brand];
+  if (!ids || !ids.length) return reply(msg, "Merek tidak ditemukan.");
+  st.order.brand = brand;
+  st.voucherList = null;
+  return renderProviderList(msg, st, ids, "brand");
+}
+
+async function handleBackBrand(chatId, msg, st) {
+  if (!st.cfg || !st.opGroups || !st.order.kategori) return reply(msg, "Sesi expired. Ketik /order untuk mulai lagi.");
+  st.step = "brand";
+  delete st.order.brand;
+  return renderBrands(msg, st);
+}
+
 async function doOrder(msg) {
   const chatId = msg.chat.id;
   if (isOngoing(chatId)) {
@@ -1112,7 +1178,7 @@ bot.on("callback_query", (q) => {
 
   (async () => {
     try {
-      const FLOW_CB = ["cat:", "op:", "vch:", "vchp:", "pay:", "order:cancel"];
+      const FLOW_CB = ["cat:", "brand:", "op:", "vch:", "vchp:", "pay:", "order:cancel"];
     const isFlow = FLOW_CB.some((p) => data.startsWith(p));
     if (isFlow && (!st.step || !st.flowMsg || !st.cfg || q.message.message_id !== st.flowMsg)) {
       return reply(q.message, "Sesi order ini sudah kedaluwarsa atau bukan pesan terbaru. Ketik /order untuk mulai lagi.");
@@ -1147,6 +1213,7 @@ bot.on("callback_query", (q) => {
     if (data === "menu:notifikasi") return guard(doNotifikasi)(q.message);
     if (data === "back:kategori") return handleBackKategori(chatId, q.message, st);
     if (data === "back:operator") return handleBackOperator(chatId, q.message, st);
+    if (data === "back:brand") return handleBackBrand(chatId, q.message, st);
     if (data === "menu:order") return doOrder(q.message);
     if (data === "menu:bantuan") {
       await reply(q.message, helpFor(chatId), { parse_mode: "HTML" });
@@ -1160,6 +1227,7 @@ bot.on("callback_query", (q) => {
     if (data.startsWith("struk:")) return handleStruk(chatId, q.message, data.slice(6));
     if (data.startsWith("qr:")) return handleQrPick(chatId, q.message, data.slice(3));
     if (data.startsWith("konfirm:")) return handleKonfirm(chatId, q.message, data.slice(8));
+    if (data.startsWith("brand:")) return handleBrandPick(chatId, q.message, st, data.slice(6));
     if (data.startsWith("cat:")) return handleCatPick(chatId, q.message, st, data.slice(4));
     if (data.startsWith("op:")) return handleOpPick(chatId, q.message, st, data.slice(3));
     if (data.startsWith("vch:")) return handleVchPick(chatId, q.message, st, data.slice(4));
@@ -1194,16 +1262,22 @@ async function handleCatPick(chatId, msg, st, key) {
   const cfg = st.cfg;
   const cat = order.categoryByKey(cfg, key);
   if (!cat) return reply(msg, "Kategori tidak ditemukan.");
-  st.order.kategori = key;
-  st.order.field = cat.field;
+  st.order = { kategori: key, field: cat.field };
   st.voucherList = null;
+  st.opGroups = null;
 
   const ops = cat.operators || {};
   const keys = Object.keys(ops);
   if (!keys.length) return reply(msg, "Tidak ada provider untuk kategori ini.");
-  const rows = chunk(keys.map((id) => ({ text: ops[id], data: "op:" + id })), 2);
-  rows.push([{ text: "⬅️ Kategori", data: "back:kategori" }]);
-  return flowEdit(msg, st, `Kategori *${cat.label.trim()}*\nPilih *provider*:`, rows);
+
+  const groups = brandGroupsFor(cat);
+  const brandNames = Object.keys(groups);
+  if (keys.length > 15 && brandNames.length >= 2) {
+    st.opGroups = groups;
+    st.step = "brand";
+    return renderBrands(msg, st);
+  }
+  return renderProviderList(msg, st, keys, "kategori");
 }
 
 async function handleBackKategori(chatId, msg, st) {
@@ -1223,15 +1297,11 @@ async function handleBackOperator(chatId, msg, st) {
   if (!cfg || !kategori) return reply(msg, "Sesi expired. Ketik /order untuk mulai lagi.");
   const cat = order.categoryByKey(cfg, kategori);
   if (!cat) return reply(msg, "Kategori tidak ditemukan.");
-  st.step = "kategori";
-  st.order = { kategori };
-  st.order.field = cat.field;
   st.voucherList = null;
-  const ops = cat.operators || {};
-  const keys = Object.keys(ops);
-  const rows = chunk(keys.map((id) => ({ text: ops[id], data: "op:" + id })), 2);
-  rows.push([{ text: "⬅️ Kategori", data: "back:kategori" }]);
-  return flowEdit(msg, st, `Kategori *${cat.label.trim()}*\nPilih *provider*:`, rows);
+  if (st.order.brand && st.opGroups && st.opGroups[st.order.brand]) {
+    return renderProviderList(msg, st, st.opGroups[st.order.brand], "brand");
+  }
+  return renderProviderList(msg, st, Object.keys(cat.operators || {}), "kategori");
 }
 
 const VOUCHER_PAGE = 20;
