@@ -1,6 +1,6 @@
 "use strict";
 
-const { initBot, isAllowed, guard, reply, inlineButtons, removeKeyboard } = require("../bot/telegram");
+const { initBot, isAllowed, guard, reply, inlineButtons, removeKeyboard, startStream } = require("../bot/telegram");
 const { loadCatalog, searchProducts, formatHarga } = require("./harga");
 const akun = require("./akun");
 const order = require("./order");
@@ -15,6 +15,22 @@ const path = require("path");
 const os = require("os");
 
 const bot = initBot();
+
+const BOT_COMMANDS = [
+  { command: "start", description: "Mulai / sapaan" },
+  { command: "menu", description: "Menu utama" },
+  { command: "order", description: "Mulai transaksi" },
+  { command: "harga", description: "Cari produk & harga" },
+  { command: "riwayat", description: "Riwayat transaksi" },
+  { command: "deposit", description: "Deposit / top-up saldo" },
+  { command: "saldo", description: "Cek saldo (admin)" },
+  { command: "mutasi", description: "Mutasi saldo (admin)" },
+  { command: "notifikasi", description: "Notifikasi order (admin)" },
+  { command: "batal", description: "Batalkan proses" },
+  { command: "help", description: "Bantuan" },
+];
+bot.setMyCommands(BOT_COMMANDS).catch((e) => console.log("[CMD] setMyCommands gagal:", e.message));
+bot.setChatMenuButton({ menu_button: { type: "commands" } }).catch((e) => console.log("[CMD] setChatMenuButton gagal:", e.message));
 
 const states = new Map();
 const STATE_TTL = 30 * 60 * 1000; // 30 minutes
@@ -53,6 +69,7 @@ bot.on("message", (msg) => {
 
 bot.on("callback_query", (q) => {
   const chatId = q.message && q.message.chat && q.message.chat.id;
+  bot.answerCallbackQuery(q.id).catch(() => {});
   console.log(`[CB]  chat=${chatId} data=${JSON.stringify(q.data)}`);
 });
 
@@ -384,37 +401,41 @@ function confirmButton(id) {
 /* ==================== Menu utama + reply keyboard ==================== */
 
 const HELP_NORMAL = [
-  "🤖 *Bot KonterPulsa*",
+  "❓ <b>Bantuan</b>",
+  "<blockquote>Ketik /batal kapan saja untuk membatalkan proses yang sedang berjalan.</blockquote>",
   "",
-  "Perintah:",
-  "• /menu — tampilkan menu utama",
-  "• /harga `<kata>` — cari produk & harga (bisa langsung order)",
-  "• /riwayat `[n]` — riwayat transaksi (default 5)",
-  "• /deposit — riwayat deposit & buat deposit (top-up)",
-  "• /order — mulai transaksi",
-  "• /batal — batalkan proses order",
+  "🛒 <b>Belanja</b>",
+  "• <code>/order</code> — mulai transaksi",
+  "• <code>/harga &lt;kata&gt;</code> — cari produk & harga",
   "",
-  "Gunakan tombol *reply keyboard* di bawah atau menu utama.",
+  "📋 <b>Akun</b>",
+  "• <code>/riwayat</code> — riwayat transaksi",
+  "• <code>/deposit</code> — deposit / top-up saldo",
   "",
-  "Order, cek harga & riwayat bisa dilakukan semua orang.",
+  "🛠 <b>Lainnya</b>",
+  "• <code>/menu</code> — menu utama",
+  "",
+  "<i>🛍 KonterPulsa · order, cek harga & riwayat bisa untuk semua orang</i>",
 ].join("\n");
 
 const HELP_ADMIN = [
-  "🤖 *Bot KonterPulsa*",
+  "❓ <b>Bantuan — Admin</b>",
+  "<blockquote>Ketik /batal kapan saja untuk membatalkan proses yang sedang berjalan.</blockquote>",
   "",
-  "Perintah:",
-  "• /menu — tampilkan menu utama",
-  "• /harga `<kata>` — cari produk & harga (bisa langsung order)",
-  "• /saldo — cek saldo & info akun",
-  "• /riwayat `[n]` — riwayat transaksi (default 5)",
-  "• /mutasi `[n]` — mutasi saldo",
-  "• /notifikasi — notifikasi status order terbaru",
-  "• /deposit — riwayat deposit & buat deposit (top-up)",
-  "• /order — mulai transaksi",
-  "• /batal — batalkan proses order",
-  "• /kirimqr `<id>` — kirim ulang QR pembayaran (admin)",
+  "🛒 <b>Belanja</b>",
+  "• <code>/order</code> — mulai transaksi",
+  "• <code>/harga &lt;kata&gt;</code> — cari produk & harga",
   "",
-  "Gunakan tombol *reply keyboard* di bawah atau menu utama.",
+  "💰 <b>Akun</b>",
+  "• <code>/saldo</code> · <code>/mutasi</code> — saldo & mutasi",
+  "• <code>/riwayat</code> · <code>/deposit</code> — riwayat & top-up",
+  "• <code>/notifikasi</code> — status order terbaru",
+  "",
+  "🛠 <b>Lainnya</b>",
+  "• <code>/menu</code> — menu utama",
+  "• <code>/kirimqr &lt;id&gt;</code> — kirim ulang QR pembayaran",
+  "",
+  "<i>🛍 KonterPulsa · ketik /menu untuk kembali</i>",
 ].join("\n");
 
 function mainMenuRows(admin) {
@@ -456,9 +477,11 @@ function replyKeyboardMarkup(admin) {
 
 async function showMainMenu(chatId, label) {
   const admin = isAllowed(chatId);
-  const text = label || "🤖 *Menu Utama — KonterPulsa*";
+  const text =
+    label ||
+    "🛍 <b>KonterPulsa</b>\n<blockquote>Belanja digital: pulsa, kuota, token, game, tagihan — cepat &amp; otomatis.</blockquote>\n<i>Pilih menu di bawah · /batal untuk membatalkan proses</i>";
   return bot.sendMessage(chatId, text, {
-    parse_mode: "Markdown",
+    parse_mode: "HTML",
     ...inlineButtons(mainMenuRows(admin)),
   });
 }
@@ -469,7 +492,7 @@ function helpFor(chatId) {
 
 async function doStart(msg) {
   const admin = isAllowed(msg.chat.id);
-  await bot.sendMessage(msg.chat.id, helpFor(msg.chat.id), { parse_mode: "Markdown", ...replyKeyboardMarkup(admin) });
+  await bot.sendMessage(msg.chat.id, helpFor(msg.chat.id), { parse_mode: "HTML", ...replyKeyboardMarkup(admin) });
   return showMainMenu(msg.chat.id);
 }
 
@@ -486,12 +509,11 @@ async function handleCari(msg, q) {
   }
   const chatId = msg.chat.id;
   chatAction(chatId);
-  const wait = await reply(msg, "Mencari...");
+  const spin = await startStream(chatId, "Mencari...");
   try {
     const cat = await loadCatalog();
     const res = searchProducts(cat, q);
-    await bot.deleteMessage(chatId, wait.message_id).catch(() => {});
-    if (!res.length) return reply(msg, "Tidak ada produk cocok dengan *" + q + "*", { parse_mode: "Markdown" });
+    if (!res.length) return spin.fail("Tidak ada produk cocok dengan *" + q + "*", { parse_mode: "Markdown" });
 
     const lines = res.slice(0, 12).map((p) => {
       const status = p.status === 0 ? " *(Kosong)*" : "";
@@ -511,10 +533,9 @@ async function handleCari(msg, q) {
       );
     }
     rows.push([{ text: "⬅️ Menu Utama", data: "menu" }]);
-    return reply(msg, out, { parse_mode: "Markdown", ...inlineButtons(rows) });
+    return spin.finish(out, { parse_mode: "Markdown", ...inlineButtons(rows) });
   } catch (e) {
-    await bot.deleteMessage(chatId, wait.message_id).catch(() => {});
-    return reply(msg, "Gagal mengambil katalog: " + e.message);
+    return spin.fail("Gagal mengambil katalog: " + e.message);
   }
 }
 bot.onText(/^\/harga\s+(.+)$/, (msg, m) => handleCari(msg, m[1].trim()));
@@ -527,12 +548,11 @@ bot.onText(/^\/cari$/, (msg) => handleCari(msg, ""));
 async function doSaldo(msg) {
   const chatId = msg.chat.id;
   chatAction(chatId);
-  const wait = await reply(msg, "Mengambil data akun...");
+  const spin = await startStream(chatId, "Mengambil data akun...");
   try {
     const p = await akun.getProfil();
-    await bot.deleteMessage(chatId, wait.message_id).catch(() => {});
     if (p.status !== 200) {
-      return reply(msg, "Gagal (status " + p.status + "). Cek KONTER_COOKIE / sesi login.");
+      return spin.fail("Gagal (status " + p.status + "). Cek KONTER_COOKIE / sesi login.");
     }
     const name = p.nama || p.pengguna || "Akun";
     const pairs = [
@@ -547,7 +567,6 @@ async function doSaldo(msg) {
       "<b>👤 " + escHtml(name) + "</b>\n<table bordered>" +
       pairs.map(([k, v]) => "<tr><th>" + escHtml(k) + "</th><td>" + escHtml(v) + "</td></tr>").join("") +
       "</table>";
-    const fallback = "👤 *" + name + "*\n" + pairs.map(([k, v]) => k + ": " + fmt(v)).join("\n");
     const rows = [
       [
         { text: "🧾 Mutasi", data: "menu:mutasi" },
@@ -555,13 +574,12 @@ async function doSaldo(msg) {
         { text: "💰 Top Up", data: "dep:new" },
       ],
     ];
-    return bot.sendRichMessage(msg.chat.id, html, fallback, {
-      parse_mode: "Markdown",
+    return spin.finish(html, {
+      parse_mode: "HTML",
       reply_markup: inlineButtons(rows).reply_markup,
     });
   } catch (e) {
-    await bot.deleteMessage(chatId, wait.message_id).catch(() => {});
-    return reply(msg, "Gagal: " + e.message);
+    return spin.fail("Gagal: " + e.message);
   }
 }
 bot.onText(/^\/(saldo|profil)$/, guard(doSaldo));
@@ -571,6 +589,14 @@ bot.onText(/^\/(saldo|profil)$/, guard(doSaldo));
 function isPendingStatus(e) {
   const st = ((e.statusPembayaran || "") + " " + (e.statusPengisian || "") + " " + (e.status || "")).toLowerCase();
   return /tunggu|pending|menunggu|proses|belum/i.test(st);
+}
+
+function statusIcon(st) {
+  const s = String(st || "");
+  if (/tunggu|pending|menunggu|proses|belum/i.test(s)) return "⏳";
+  if (/sukses|lunas|berhasil|success/i.test(s)) return "✅";
+  if (/gagal|ditolak|batal|expire|failed/i.test(s)) return "❌";
+  return "▫️";
 }
 
 function renderRiwayat(msg, adm, list) {
@@ -593,7 +619,7 @@ function renderRiwayat(msg, adm, list) {
   const lines = slice.map((e) => {
     const who = adm ? ` 👤 ${e.user || "akun/web"}` : "";
     const st = e.statusPembayaran && e.statusPengisian ? `${e.statusPembayaran}/${e.statusPengisian}` : e.statusPembayaran || e.status || "-";
-    return `#${e.trx} | ${e.tanggal}${who}\n  ${e.voucher} — ${e.harga} (${e.pembayaran})\n  No: ${e.nomor} | ${st}`;
+    return `#${e.trx} | ${e.tanggal}${who}\n  ${e.voucher} — ${e.harga} (${e.pembayaran})\n  No: ${e.nomor} | ${statusIcon(st)} ${st}`;
   });
 
   const headers = ["No", "Tanggal", "Produk", "Nomor", "Harga", "Bayar", "Status"];
@@ -602,7 +628,7 @@ function renderRiwayat(msg, adm, list) {
   const body = slice
     .map((e, i) => {
       const st = e.statusPembayaran && e.statusPengisian ? `${e.statusPembayaran}/${e.statusPengisian}` : e.statusPembayaran || e.status || "-";
-      const cells = [String(i + 1), e.tanggal, e.voucher, e.nomor, e.harga, e.pembayaran, st];
+      const cells = [String(i + 1), e.tanggal, e.voucher, e.nomor, e.harga, e.pembayaran, statusIcon(st) + " " + st];
       if (adm) cells.push(e.user || "akun/web");
       return "<tr>" + cells.map((c) => "<td>" + escHtml(c) + "</td>").join("") + "</tr>";
     })
@@ -654,17 +680,13 @@ async function doMutasi(msg, m) {
   const chatId = msg.chat.id;
   chatAction(chatId);
   const limit = Math.min(parseInt(m && m[1] ? m[1] : "5", 10) || 5, 15);
-  const wait = await reply(msg, "Mengambil mutasi saldo...");
+  const spin = await startStream(chatId, "Mengambil mutasi saldo...");
   try {
     const { status, rows } = await akun.getMutasi(limit);
-    await bot.deleteMessage(chatId, wait.message_id).catch(() => {});
-    if (status !== 200) return reply(msg, "Gagal (status " + status + "). Cek sesi login.");
+    if (status !== 200) return spin.fail("Gagal (status " + status + "). Cek sesi login.");
     if (!rows.length) {
-      return reply(msg, "Belum ada mutasi.", inlineButtons([[{ text: "⬅️ Menu", data: "menu" }]]));
+      return spin.fail("Belum ada mutasi.", inlineButtons([[{ text: "⬅️ Menu", data: "menu" }]]));
     }
-    const lines = rows.map((r) => {
-      return `${r.tanggal} | ${r.jumlah}\n  ${r.keterangan}\n  Saldo akhir: ${r.saldoAkhir}`;
-    });
     const thead = "<tr>" + ["Tanggal", "Jumlah", "Keterangan", "Saldo Akhir"].map((c) => "<th>" + escHtml(c) + "</th>").join("") + "</tr>";
     const body = rows
       .map(
@@ -674,14 +696,12 @@ async function doMutasi(msg, m) {
       )
       .join("");
     const html = "<b>🧾 Mutasi Saldo</b>\n<table bordered striped>" + thead + body + "</table>";
-    const fallback = "🧾 *Mutasi Saldo*\n\n" + lines.join("\n\n");
-    return bot.sendRichMessage(msg.chat.id, html, fallback, {
-      parse_mode: "Markdown",
+    return spin.finish(html, {
+      parse_mode: "HTML",
       reply_markup: inlineButtons([[{ text: "⬅️ Menu Utama", data: "menu" }]]).reply_markup,
     });
   } catch (e) {
-    await bot.deleteMessage(chatId, wait.message_id).catch(() => {});
-    return reply(msg, "Gagal: " + e.message);
+    return spin.fail("Gagal: " + e.message);
   }
 }
 bot.onText(/^\/mutasi(?:\s+(\d+))?$/, guard(doMutasi));
@@ -691,12 +711,11 @@ bot.onText(/^\/mutasi(?:\s+(\d+))?$/, guard(doMutasi));
 async function doNotifikasi(msg) {
   const chatId = msg.chat.id;
   chatAction(chatId);
-  const wait = await reply(msg, "Mengambil notifikasi...");
+  const spin = await startStream(chatId, "Mengambil notifikasi...");
   try {
     const { status, items } = await akun.getNotifikasi(10);
-    if (wait && wait.message_id) await bot.deleteMessage(chatId, wait.message_id).catch(() => {});
-    if (status !== 200) return reply(msg, "Gagal (status " + status + "). Cek sesi login.");
-    if (!items.length) return reply(msg, "Belum ada notifikasi.");
+    if (status !== 200) return spin.fail("Gagal (status " + status + "). Cek sesi login.");
+    if (!items.length) return spin.fail("Belum ada notifikasi.");
     const parts = items.map((n, i) => {
       const icon = n.unread ? "🔵" : "▫️";
       return (
@@ -707,9 +726,9 @@ async function doNotifikasi(msg) {
     });
     let text = "🔔 <b>Notifikasi Terbaru</b>\n\n" + parts.join("\n\n");
     if (text.length > 4000) text = text.slice(0, 4000);
-    return reply(msg, text, { parse_mode: "HTML" });
+    return spin.finish(text, { parse_mode: "HTML" });
   } catch (e) {
-    return reply(msg, "Gagal mengambil notifikasi: " + e.message);
+    return spin.fail("Gagal mengambil notifikasi: " + e.message);
   }
 }
 
@@ -800,11 +819,10 @@ async function doDeposit(msg) {
   const chatId = msg.chat.id;
   chatAction(chatId);
   const adm = isAllowed(chatId);
-  const wait = await reply(msg, "Mengambil riwayat deposit...");
+  const spin = await startStream(chatId, "Mengambil riwayat deposit...");
   try {
     const { status, rows } = await akun.getDeposit(50);
-    await bot.deleteMessage(chatId, wait.message_id).catch(() => {});
-    if (status !== 200) return reply(msg, "Gagal (status " + status + "). Cek sesi login.");
+    if (status !== 200) return spin.fail("Gagal (status " + status + "). Cek sesi login.");
     const mine = new Set(depLedger.listByChat(chatId).map((e) => String(e.depId)));
     const shown = adm ? rows : rows.filter((r) => mine.has(String(r.id))).slice(0, 10);
     const btns = [
@@ -812,8 +830,7 @@ async function doDeposit(msg) {
       { text: "⬅️ Menu Utama", data: "menu" },
     ];
     if (!shown.length) {
-      return reply(
-        msg,
+      return spin.fail(
         adm
           ? "Belum ada riwayat deposit."
           : "Belum ada deposit yang kamu buat.\nKlik *Buat Deposit* untuk top-up saldo.",
@@ -825,18 +842,16 @@ async function doDeposit(msg) {
       .map(
         (r, i) =>
           "<tr><td>" + (i + 1) + "</td><td>" + escHtml(r.tanggal) + "</td><td>" + escHtml(r.jumlah) + "</td><td>" +
-          escHtml(r.metode) + "</td><td>" + escHtml(r.status) + "</td></tr>"
+          escHtml(r.metode) + "</td><td>" + escHtml(statusIcon(r.status) + " " + r.status) + "</td></tr>"
       )
       .join("");
     const html = `<b>➕ Deposit (Riwayat)</b>\n<table bordered striped>${thead}${body}</table>`;
-    const fallback = "➕ *Deposit*\n\n" + shown.map((r, i) => `${i + 1}. ${r.tanggal} — ${r.jumlah} (${r.metode}) — ${r.status}`).join("\n");
-    return bot.sendRichMessage(chatId, html, fallback, {
-      parse_mode: "Markdown",
+    return spin.finish(html, {
+      parse_mode: "HTML",
       reply_markup: inlineButtons([btns]).reply_markup,
     });
   } catch (e) {
-    await bot.deleteMessage(chatId, wait.message_id).catch(() => {});
-    return reply(msg, "Gagal: " + e.message);
+    return spin.fail("Gagal: " + e.message);
   }
 }
 bot.onText(/^\/deposit$/, doDeposit);
@@ -904,16 +919,14 @@ async function doOrder(msg) {
   if (isOngoing(chatId)) {
     return reply(msg, "Masih ada pembayaran QRIS yang berjalan (#" + QRIS_POLLS[chatId].trx + "). Tunggu sampai selesai atau hubungi admin.");
   }
-  const wait = await reply(msg, "Menyiapkan menu order...");
+  const spin = await startStream(chatId, "Menyiapkan menu order...");
   let cfg;
   try {
     cfg = await order.getOrderConfig();
   } catch (e) {
-    await bot.deleteMessage(chatId, wait.message_id).catch(() => {});
-    return reply(msg, "Gagal memuat config order: " + e.message);
+    return spin.fail("Gagal memuat config order: " + e.message);
   }
-  await bot.deleteMessage(chatId, wait.message_id).catch(() => {});
-  if (cfg.status !== 200) return reply(msg, "Sesi tidak valid (status " + cfg.status + "). Cek login.");
+  if (cfg.status !== 200) return spin.fail("Sesi tidak valid (status " + cfg.status + "). Cek login.");
 
   const st = getState(chatId);
   st.step = "kategori";
@@ -922,7 +935,7 @@ async function doOrder(msg) {
 
   const rows = chunk(cfg.categories.map((c) => ({ text: c.label, data: "cat:" + c.key })), 2);
   rows.push([{ text: "⬅️ Menu Utama", data: "menu" }]);
-  const sent = await reply(msg, "Pilih *kategori produk*:", { parse_mode: "Markdown", ...inlineButtons(rows) });
+  const sent = await spin.finish("Pilih *kategori produk*:", { parse_mode: "Markdown", ...inlineButtons(rows) });
   st.flowMsg = sent.message_id;
   return sent;
 }
@@ -943,11 +956,11 @@ async function doKirimQr(msg, trx) {
   const chatId = msg.chat.id;
   const id = parseId(String(trx));
   const entry = ledger.get(id);
-  await reply(msg, "Mengambil QR untuk #" + id + "...");
+  const spin = await startStream(chatId, "Mengambil QR untuk #" + id + "...");
   const s = await buildQrSet(id, entry);
-  if (!s.buffer) return reply(msg, "QR belum tersedia: " + (s.error || "belum ada sesi pembayaran."));
+  if (!s.buffer) return spin.fail("QR belum tersedia: " + (s.error || "belum ada sesi pembayaran."));
 
-  await bot.sendPhoto(chatId, s.buffer, {
+  await spin.finishPhoto(s.buffer, {
     caption: "🖼️ *QR Pembayaran QRIS*\n" + s.info + "\n\nScan QR, bayar, lalu tekan tombol konfirmasi. Status dipantau otomatis.",
     parse_mode: "Markdown",
     ...inlineButtons(confirmButton(id)),
@@ -976,7 +989,7 @@ async function handleKonfirm(chatId, msg, trx) {
       return reply(msg, "🔒 Ini bukan transaksi Anda.");
     }
   }
-  await reply(msg, "Mengirim konfirmasi pembayaran #" + id + "...");
+  const spin = await startStream(chatId, "Mengirim konfirmasi pembayaran #" + id + "...");
   let r;
   try {
     r = await request(
@@ -984,7 +997,7 @@ async function handleKonfirm(chatId, msg, trx) {
       (isDep ? "/payment/qris_livin_nt/deposit/" : "/payment/qris_livin_nt/trx/") + encodeURIComponent(id)
     );
   } catch (e) {
-    return reply(msg, "Gagal konfirmasi: " + e.message);
+    return spin.fail("Gagal konfirmasi: " + e.message);
   }
   let st = "";
   let stLabel = "-";
@@ -1014,7 +1027,7 @@ async function handleKonfirm(chatId, msg, trx) {
       });
     }
   }
-  await reply(msg, "Konfirmasi terkirim (status " + r.status + ").\nStatus trx *#" + id + "*: " + stLabel, { parse_mode: "Markdown" });
+  await spin.finish("Konfirmasi terkirim (status " + r.status + ").\nStatus trx *#" + id + "*: " + stLabel, { parse_mode: "Markdown" });
   const entry = isDep ? depLedger.get(id) : ledger.get(id);
   const target = entry ? Number(entry.chat) : chatId;
   if (/sukses/i.test(st)) {
@@ -1094,7 +1107,7 @@ bot.on("callback_query", (q) => {
         } catch (e) {}
         clearDep(chatId);
       }
-      return showMainMenu(chatId, "📋 *Menu Utama*");
+      return showMainMenu(chatId, "📋 <b>Menu Utama</b>");
     }
     if (data === "menu:cari") return handleCari(q.message, "");
     if (data === "menu:saldo") return guard(doSaldo)(q.message);
@@ -1105,7 +1118,7 @@ bot.on("callback_query", (q) => {
     if (data === "back:operator") return handleBackOperator(chatId, q.message, st);
     if (data === "menu:order") return doOrder(q.message);
     if (data === "menu:bantuan") {
-      await reply(q.message, helpFor(chatId), { parse_mode: "Markdown" });
+      await reply(q.message, helpFor(chatId), { parse_mode: "HTML" });
       return showMainMenu(chatId);
     }
     if (data === "menu:deposit") return doDeposit(q.message);
@@ -1405,10 +1418,9 @@ async function handleHistoryDetail(chatId, msg, id) {
       return reply(msg, "🔒 Detail transaksi ini bukan milik Anda.");
     }
   }
-  const wait = await reply(msg, "Mengambil detail transaksi...");
+  const spin = await startStream(chatId, "Mengambil detail transaksi...");
   try {
     const d = await akun.getHistoryDetail(id);
-    await bot.deleteMessage(chatId, wait.message_id).catch(() => {});
     const pairs = [
       ["Jenis Produk", d.jenisProduk],
       ["Provider", d.provider],
@@ -1428,15 +1440,13 @@ async function handleHistoryDetail(chatId, msg, id) {
       `<b>🔍 Detail Transaksi #${escHtml(id)}</b>\n<table bordered>` +
       pairs.map(([k, v]) => `<tr><th>${escHtml(k)}</th><td>${escHtml(v)}</td></tr>`).join("") +
       "</table>";
-    const fallback = ["🔍 *Detail Transaksi #" + id + "*"].concat(pairs.map(([k, v]) => k + ": " + fmt(v))).join("\n");
     const btns = [[{ text: "🖨️ Cetak Struk", data: "struk:" + id }], [{ text: "⬅️ Riwayat", data: "menu:riwayat" }]];
-    return bot.sendRichMessage(chatId, html, fallback, {
-      parse_mode: "Markdown",
+    return spin.finish(html, {
+      parse_mode: "HTML",
       reply_markup: inlineButtons(btns).reply_markup,
     });
   } catch (e) {
-    await bot.deleteMessage(chatId, wait.message_id).catch(() => {});
-    return reply(msg, "Gagal: " + e.message);
+    return spin.fail("Gagal: " + e.message);
   }
 }
 
@@ -1448,7 +1458,7 @@ async function handleStruk(chatId, msg, id) {
       return reply(msg, "🔒 Ini bukan transaksi Anda.");
     }
   }
-  const wait = await reply(msg, "Membuat struk pembayaran...");
+  const spin = await startStream(chatId, "Membuat struk pembayaran...");
   try {
     const d = await akun.getHistoryDetail(idn);
     const sell = roundSell(d.harga);
@@ -1465,16 +1475,14 @@ async function handleStruk(chatId, msg, id) {
       token: d.token,
       status: d.statusPengisian,
     });
-    await bot.deleteMessage(chatId, wait.message_id).catch(() => {});
-    if (!buf) return reply(msg, "Gagal membuat gambar struk.");
-    return bot.sendPhoto(chatId, buf, {
+    if (!buf) return spin.fail("Gagal membuat gambar struk.");
+    return spin.finishPhoto(buf, {
       caption: "🧾 *Struk pembayaran #" + idn + "*\nKirim gambar ini ke pelanggan.",
       parse_mode: "Markdown",
       reply_markup: inlineButtons([[{ text: "⬅️ Detail", data: "hist:" + idn }]]).reply_markup,
     });
   } catch (e) {
-    await bot.deleteMessage(chatId, wait.message_id).catch(() => {});
-    return reply(msg, "Gagal membuat struk: " + e.message);
+    return spin.fail("Gagal membuat struk: " + e.message);
   }
 }
 
@@ -1499,7 +1507,7 @@ const REPLY_ACTION = {
   "🛒 Order": (msg) => doOrder(msg),
   "➕ Deposit": (msg) => doDeposit(msg),
   "❓ Bantuan": async (msg) => {
-    await reply(msg, helpFor(msg.chat.id), { parse_mode: "Markdown" });
+    await reply(msg, helpFor(msg.chat.id), { parse_mode: "HTML" });
     return showMainMenu(msg.chat.id);
   },
 };
