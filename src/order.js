@@ -5,20 +5,13 @@ const { extractVar, parseCatalog, extractSelectOptions, extractCsrfFromHtml } = 
 
 const BASE_URL = require("./config").BASE_URL;
 
-const CATEGORY_ORDER = [
-  "pulsa", "kuota_axis", "kuota_indosat", "kuota_smartfren", "kuota_telkomsel",
-  "kuota_tri", "kuota_xl", "kuota_byu", "nelpon_sms", "game", "token_pln",
-  "voucher_digital", "voucher_internet", "voucher_game", "indosat_gift",
-  "telkomsel_combo_sakti", "paket_internet", "pdam", "tagihan", "dompet_digital",
-  "telkomsel_bulk", "indosat_only4u", "tv_prabayar", "pbb", "aktivasi_voucher",
-];
-
-function categoryBlock(html, key) {
+function categoryBlock(html, key, allKeys) {
   const si = html.indexOf('id="' + key + '"');
   if (si === -1) return null;
-  const nextCats = CATEGORY_ORDER.map((c) => 'id="' + c + '"').filter(
-    (t) => html.indexOf(t) > si
-  );
+  const nextCats = (allKeys || [])
+    .filter((k) => k !== key)
+    .map((k) => 'id="' + k + '"')
+    .filter((t) => html.indexOf(t) > si);
   nextCats.push('id="keterangan"');
   const end = Math.min(...nextCats.map((t) => html.indexOf(t)).filter((v) => v > -1));
   return html.slice(si, end === -1 ? html.length : end);
@@ -29,12 +22,17 @@ function parseCategories(html) {
   const m = html.match(/<select[^>]*id="produk-select"[\s\S]*?<\/select>/);
   const sel = m ? m[0] : html;
   const optRe = /<option[^>]*value="([^"]*)"[^>]*>([\s\S]*?)<\/option>/g;
+  const allKeys = [];
   let o;
+  while ((o = optRe.exec(sel))) {
+    if (o[1]) allKeys.push(o[1]);
+  }
+  optRe.lastIndex = 0;
   while ((o = optRe.exec(sel))) {
     const val = o[1];
     if (!val) continue;
     const label = o[2].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
-    const blk = categoryBlock(html, val) || "";
+    const blk = categoryBlock(html, val, allKeys) || "";
     cats.push({
       key: val,
       label,
@@ -54,7 +52,7 @@ function categoryFieldFromBlock(blk) {
 }
 
 async function getOrderConfig() {
-  const r = await getHTML("/");
+  const r = await getHTML("/order");
   const catalog = parseCatalog(r.text);
   return {
     status: r.status,
@@ -114,5 +112,4 @@ module.exports = {
   categoryByKey,
   findCategoryForOperator,
   submitOrder,
-  CATEGORY_ORDER,
 };
