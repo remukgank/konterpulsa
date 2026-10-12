@@ -921,15 +921,59 @@ const ORDER_MENU = [
   { key: "pulsa", label: "📱 Pulsa" },
   { key: "paket_internet", label: "📦 Paket Internet" },
   { key: "game", label: "🎮 Topup Game" },
-  { key: "token_listrik", label: "⚡ Token PLN" },
+  {
+    key: "pln",
+    label: "⚡ Token PLN",
+    group: [
+      { key: "token_listrik", label: "🏷️ Tanpa WA & Prabayar" },
+      { key: "pln_prabayar", label: "⚡ Token PLN (Reguler)" },
+      { key: "token_pln_h2h", label: "⚡ Token PLN H2H" },
+    ],
+  },
+  { key: "tagihan:88,732", label: "🧾 Tagihan PLN" },
   { key: "ewallet_bebas_nominal", label: "💰 Topup e-Wallet" },
+  { key: "lainnya", label: "📂 Kategori Lainnya", autoRest: true },
 ];
 
+const ORDER_MENU_USED_KEYS = ["pulsa", "paket_internet", "game", "token_listrik", "pln_prabayar", "token_pln_h2h", "tagihan", "ewallet_bebas_nominal"];
+
+function menuEntryCatKey(x) {
+  return String(x.key).split(":")[0];
+}
+
 function orderMenuRows(cfg) {
-  return chunk(
-    ORDER_MENU.filter((x) => cfg.categories.some((c) => c.key === x.key)).map((x) => ({ text: x.label, data: "cat:" + x.key })),
-    2
-  );
+  const rows = [];
+  for (const x of ORDER_MENU) {
+    if (x.group) {
+      if (x.group.some((it) => cfg.categories.some((c) => c.key === it.key))) rows.push({ text: x.label, data: "submenu:" + x.key });
+    } else if (x.autoRest) {
+      rows.push({ text: x.label, data: "submenu:" + x.key });
+    } else if (cfg.categories.some((c) => c.key === menuEntryCatKey(x))) {
+      rows.push({ text: x.label, data: "cat:" + x.key });
+    }
+  }
+  return chunk(rows, 2);
+}
+
+function submenuItems(cfg, entry) {
+  if (entry.autoRest) {
+    return cfg.categories
+      .filter((c) => !ORDER_MENU_USED_KEYS.includes(c.key))
+      .map((c) => ({ label: c.label, key: c.key }));
+  }
+  return (entry.group || []).filter((it) => cfg.categories.some((c) => c.key === it.key));
+}
+
+async function handleSubmenu(chatId, msg, st, menuKey) {
+  const cfg = st.cfg;
+  if (!cfg) return reply(msg, "Sesi expired. Ketik /order untuk mulai lagi.");
+  const entry = ORDER_MENU.find((x) => x.key === menuKey);
+  if (!entry) return reply(msg, "Menu tidak ditemukan.");
+  const items = submenuItems(cfg, entry);
+  if (!items.length) return reply(msg, "Tidak ada submenu tersedia.");
+  const rows = chunk(items.map((it) => [{ text: it.label, data: "cat:" + it.key }]), 2);
+  rows.push([{ text: "⬅️ Menu Order", data: "back:kategori" }]);
+  return flowEdit(msg, st, `${entry.label}\nPilih *sub-menu* (${items.length}):`, rows);
 }
 
 function brandOf(name) {
@@ -948,9 +992,12 @@ function brandIcon(b) {
   return { Axis: "🟢", Indosat: "🟡", Smartfren: "⚪", Telkomsel: "🟠", Three: "🔵", XL: "🟣", "by.U": "🔷", Lainnya: "▫️" }[b] || "▫️";
 }
 
-function brandGroupsFor(cat) {
+function brandGroupsFor(cat, ids) {
   const groups = {};
-  Object.entries(cat.operators || {}).forEach(([id, name]) => {
+  const src = ids
+    ? ids.map((id) => [id, (cat.operators || {})[id] || id])
+    : Object.entries(cat.operators || {});
+  src.forEach(([id, name]) => {
     const b = brandOf(name);
     (groups[b] = groups[b] || []).push(id);
   });
@@ -1178,7 +1225,7 @@ bot.on("callback_query", (q) => {
 
   (async () => {
     try {
-      const FLOW_CB = ["cat:", "brand:", "op:", "vch:", "vchp:", "pay:", "order:cancel"];
+      const FLOW_CB = ["cat:", "submenu:", "brand:", "op:", "vch:", "vchp:", "pay:", "order:cancel"];
     const isFlow = FLOW_CB.some((p) => data.startsWith(p));
     if (isFlow && (!st.step || !st.flowMsg || !st.cfg || q.message.message_id !== st.flowMsg)) {
       return reply(q.message, "Sesi order ini sudah kedaluwarsa atau bukan pesan terbaru. Ketik /order untuk mulai lagi.");
@@ -1227,6 +1274,7 @@ bot.on("callback_query", (q) => {
     if (data.startsWith("struk:")) return handleStruk(chatId, q.message, data.slice(6));
     if (data.startsWith("qr:")) return handleQrPick(chatId, q.message, data.slice(3));
     if (data.startsWith("konfirm:")) return handleKonfirm(chatId, q.message, data.slice(8));
+    if (data.startsWith("submenu:")) return handleSubmenu(chatId, q.message, st, data.slice(8));
     if (data.startsWith("brand:")) return handleBrandPick(chatId, q.message, st, data.slice(6));
     if (data.startsWith("cat:")) return handleCatPick(chatId, q.message, st, data.slice(4));
     if (data.startsWith("op:")) return handleOpPick(chatId, q.message, st, data.slice(3));
@@ -1258,26 +1306,31 @@ bot.on("callback_query", (q) => {
 
 /* ==================== order flow handlers ==================== */
 
-async function handleCatPick(chatId, msg, st, key) {
+async function handleCatPick(chatId, msg, st, raw) {
+  const [key, opsStr] = String(raw).split(":");
   const cfg = st.cfg;
   const cat = order.categoryByKey(cfg, key);
   if (!cat) return reply(msg, "Kategori tidak ditemukan.");
-  st.order = { kategori: key, field: cat.field };
+  st.order = { kategori: key, field: cat.field, opsFilter: opsStr || null };
   st.voucherList = null;
   st.opGroups = null;
 
   const ops = cat.operators || {};
-  const keys = Object.keys(ops);
-  if (!keys.length) return reply(msg, "Tidak ada provider untuk kategori ini.");
+  let ids = Object.keys(ops);
+  if (opsStr) {
+    const allow = opsStr.split(",").map((s) => s.trim()).filter(Boolean);
+    ids = ids.filter((id) => allow.includes(String(id)));
+  }
+  if (!ids.length) return reply(msg, "Tidak ada provider untuk kategori ini.");
 
-  const groups = brandGroupsFor(cat);
+  const groups = brandGroupsFor(cat, ids);
   const brandNames = Object.keys(groups);
-  if (keys.length > 15 && brandNames.length >= 2) {
+  if (ids.length > 15 && brandNames.length >= 2) {
     st.opGroups = groups;
     st.step = "brand";
     return renderBrands(msg, st);
   }
-  return renderProviderList(msg, st, keys, "kategori");
+  return renderProviderList(msg, st, ids, "kategori");
 }
 
 async function handleBackKategori(chatId, msg, st) {
@@ -1301,7 +1354,12 @@ async function handleBackOperator(chatId, msg, st) {
   if (st.order.brand && st.opGroups && st.opGroups[st.order.brand]) {
     return renderProviderList(msg, st, st.opGroups[st.order.brand], "brand");
   }
-  return renderProviderList(msg, st, Object.keys(cat.operators || {}), "kategori");
+  let ids = Object.keys(cat.operators || {});
+  if (st.order.opsFilter) {
+    const allow = String(st.order.opsFilter).split(",").map((s) => s.trim()).filter(Boolean);
+    ids = ids.filter((id) => allow.includes(String(id)));
+  }
+  return renderProviderList(msg, st, ids, "kategori");
 }
 
 const VOUCHER_PAGE = 20;
