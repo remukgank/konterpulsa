@@ -1073,7 +1073,10 @@ async function sendCaptcha(chatId) {
 
 bot.on("callback_query", (q) => {
   const chatId = q.message.chat.id;
-  if (isRateLimited(chatId)) return;
+  if (isRateLimited(chatId)) {
+    bot.answerCallbackQuery(q.id, { text: "⏳ Terlalu cepat — tunggu sebentar lagi.", show_alert: false }).catch(() => {});
+    return;
+  }
   const data = q.data || "";
   const st = getState(chatId);
 
@@ -1085,25 +1088,27 @@ bot.on("callback_query", (q) => {
       return reply(q.message, "Sesi order ini sudah kedaluwarsa atau bukan pesan terbaru. Ketik /order untuk mulai lagi.");
     }
     if (data === "menu") {
+      const label = "📋 <b>Menu Utama</b>";
+      let target = null;
       if (st && st.step && st.flowMsg) {
-        try {
-          await bot.editMessageText(chatId, st.flowMsg, "🛒 Order dibatalkan — kembali ke menu.", {
-            parse_mode: "Markdown",
-            reply_markup: { inline_keyboard: [] },
-          });
-        } catch (e) {}
+        target = st.flowMsg;
         clearState(chatId);
-      }
-      if (st && st.depStep && st.depMsg) {
-        try {
-          await bot.editMessageText(chatId, st.depMsg, "Deposit dibatalkan — kembali ke menu.", {
-            parse_mode: "Markdown",
-            reply_markup: { inline_keyboard: [] },
-          });
-        } catch (e) {}
+      } else if (st && st.depStep && st.depMsg) {
+        target = st.depMsg;
         clearDep(chatId);
       }
-      return showMainMenu(chatId, "📋 <b>Menu Utama</b>");
+      if (target) {
+        // Tier 3: edit pesan flow/deposit terakhir menjadi menu (tanpa pesan baru)
+        try {
+          return await bot.editMessageText(chatId, target, label, {
+            parse_mode: "HTML",
+            reply_markup: inlineButtons(mainMenuRows(isAllowed(chatId))).reply_markup,
+          });
+        } catch (e) {
+          // jatuh ke pesan baru di bawah
+        }
+      }
+      return showMainMenu(chatId, label);
     }
     if (data === "menu:cari") return handleCari(q.message, "");
     if (data === "menu:saldo") return guard(doSaldo)(q.message);
@@ -1421,8 +1426,8 @@ async function handleHistoryDetail(chatId, msg, id) {
       ["Nomor HP", d.noHp],
       ["Harga", d.harga],
       ["Pembayaran", d.pembayaran],
-      ["Tgl Beli", d.tanggal],
-      ["Tgl Bayar", d.tanggalBayar],
+      ["Tgl Beli", tgTimeCell(d.tanggal)],
+      ["Tgl Bayar", tgTimeCell(d.tanggalBayar)],
       ["Status Bayar", d.statusPembayaran],
       ["Status Isi", d.statusPengisian],
       ["SN/Ref", d.snRef],
@@ -1431,7 +1436,12 @@ async function handleHistoryDetail(chatId, msg, id) {
     ].filter(([k, v]) => v && v !== "-");
     const html =
       `<b>🔍 Detail Transaksi #${escHtml(id)}</b>\n<table bordered>` +
-      pairs.map(([k, v]) => `<tr><th>${escHtml(k)}</th><td>${escHtml(v)}</td></tr>`).join("") +
+      pairs
+        .map(([k, v]) => {
+          const cell = String(v).includes("<tg-time ") ? v : escHtml(v);
+          return `<tr><th>${escHtml(k)}</th><td>${cell}</td></tr>`;
+        })
+        .join("") +
       "</table>";
     const btns = [[{ text: "🖨️ Cetak Struk", data: "struk:" + id }], [{ text: "⬅️ Riwayat", data: "menu:riwayat" }]];
     return spin.finishRich(html, {
@@ -1481,6 +1491,16 @@ async function handleStruk(chatId, msg, id) {
 
 /* ==================== message capture (reply keyboard, nomor & captcha) ==================== */
 
+// <tg-time> tag resmi Bot API (HTML format) — isi tag = fallback teks utk client lama.
+// Kalau tanggal tidak bisa diparse → kembalikan teks biasa (defensif).
+function tgTimeCell(dateStr) {
+  const raw = String(dateStr || "").trim();
+  if (!raw) return null;
+  const t = Date.parse(raw.replace(" ", "T"));
+  if (isNaN(t)) return raw;
+  return `<tg-time unix="${Math.floor(t / 1000)}">${escHtml(raw)}</tg-time>`;
+}
+
 function startCari(msg) {
   const st = getState(msg.chat.id);
   st.cariWait = true;
@@ -1508,7 +1528,10 @@ const REPLY_ACTION = {
 bot.on("message", async (msg) => {
   if (!msg.text) return;
   const chatId = msg.chat.id;
-  if (isRateLimited(chatId)) return;
+  if (isRateLimited(chatId)) {
+    console.log("[RL] chat=" + chatId + " pesan di-rate-limit (tanpa balasan, anti-spam)");
+    return;
+  }
   const st = getState(chatId);
   const text = msg.text.trim();
 

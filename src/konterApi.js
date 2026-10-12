@@ -57,16 +57,25 @@ async function request(method, urlPath, { body, form } = {}) {
     payload = new URLSearchParams(form).toString();
   }
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
-
-  try {
-    const res = await fetch(url, { method, headers, body: payload, redirect: "manual", signal: controller.signal });
-    _setCookiesFromHeaders(res.headers);
-    return res;
-  } finally {
-    clearTimeout(timeout);
+  // Defensif retry 1x untuk status transient (429/502/503) — backoff kecil [UNVERIFIED: 429 web belum pernah ter-observe]
+  const TRANSIENT = [429, 502, 503];
+  let res = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    try {
+      res = await fetch(url, { method, headers, body: payload, redirect: "manual", signal: controller.signal });
+      _setCookiesFromHeaders(res.headers);
+    } finally {
+      clearTimeout(timeout);
+    }
+    if (!TRANSIENT.includes(res.status) || attempt === 1) break;
+    const ra = parseInt(res.headers.get("retry-after") || "1", 10);
+    const wait = Math.min(isNaN(ra) || ra < 1 ? 1 : ra, 3);
+    console.log("[HTTP] " + method + " " + urlPath + " status " + res.status + " — retry setelah " + wait + "s");
+    await new Promise((r) => setTimeout(r, wait * 1000));
   }
+  return res;
 }
 
 async function getBuffer(urlPath) {

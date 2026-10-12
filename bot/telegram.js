@@ -17,6 +17,22 @@ function safeCall(fn) {
   }
 }
 
+async function callWith429Retry(fn, label) {
+  try {
+    return await fn();
+  } catch (e) {
+    const code = e && e.error_code;
+    const retryAfter = e && e.parameters && e.parameters.retry_after;
+    if (code === 429 && Number(retryAfter) > 0) {
+      const wait = Math.min(Number(retryAfter), 6);
+      console.log("[429] " + label + " flood — tunggu " + wait + "s, retry 1x");
+      await new Promise((r) => setTimeout(r, wait * 1000));
+      return fn();
+    }
+    throw e;
+  }
+}
+
 function createCompatibilityAdapter(coreBot) {
   return {
     onText(pattern, handler) {
@@ -40,18 +56,28 @@ function createCompatibilityAdapter(coreBot) {
     },
 
     sendMessage(chatId, text, options = {}) {
-      return coreBot.api.sendMessage(chatId, text, {
-        link_preview_options: { is_disabled: true },
-        ...options,
-      });
+      return callWith429Retry(
+        () =>
+          coreBot.api.sendMessage(chatId, text, {
+            link_preview_options: { is_disabled: true },
+            ...options,
+          }),
+        "sendMessage"
+      );
     },
 
     setMessageReaction(chatId, messageId, emoji) {
-      return coreBot.api.setMessageReaction(chatId, messageId, [{ type: "emoji", emoji }]);
+      return callWith429Retry(
+        () => coreBot.api.setMessageReaction(chatId, messageId, [{ type: "emoji", emoji }]),
+        "setMessageReaction"
+      );
     },
 
     editMessageText(chatId, messageId, text, options = {}) {
-      return coreBot.api.editMessageText(chatId, messageId, text, options);
+      return callWith429Retry(
+        () => coreBot.api.editMessageText(chatId, messageId, text, options),
+        "editMessageText"
+      );
     },
 
     sendRichMessage(chatId, html, fallback, options = {}) {
@@ -77,11 +103,14 @@ function createCompatibilityAdapter(coreBot) {
       const input = Buffer.isBuffer(photo)
         ? new InputFile(photo, "captcha.png")
         : photo;
-      return coreBot.api.sendPhoto(chatId, input, options);
+      return callWith429Retry(() => coreBot.api.sendPhoto(chatId, input, options), "sendPhoto");
     },
 
     answerCallbackQuery(callbackQueryId, options = {}) {
-      return coreBot.api.answerCallbackQuery(callbackQueryId, options);
+      return callWith429Retry(
+        () => coreBot.api.answerCallbackQuery(callbackQueryId, options),
+        "answerCallbackQuery"
+      );
     },
 
     sendChatAction(chatId, action = "typing") {
@@ -122,7 +151,12 @@ function startStream(chatId, stageText) {
     return p;
   };
   const draft = (text) => {
-    enqueue(() => core.api.sendMessageDraft(chatId, draftId, text, { can_stop: true })).catch(() => {});
+    enqueue(() =>
+      callWith429Retry(
+        () => core.api.sendMessageDraft(chatId, draftId, text, { can_stop: true }),
+        "sendMessageDraft"
+      )
+    ).catch(() => {});
   };
   const alive = () => {
     if (state.cancelled) {
@@ -142,17 +176,23 @@ function startStream(chatId, stageText) {
     finish(text, opts = {}) {
       if (!alive()) return Promise.resolve(null);
       const p = enqueue(() =>
-        core.api.sendMessage(chatId, text, {
-          link_preview_options: { is_disabled: true },
-          ...opts,
-        })
+        callWith429Retry(
+          () =>
+            core.api.sendMessage(chatId, text, {
+              link_preview_options: { is_disabled: true },
+              ...opts,
+            }),
+          "stream.finish"
+        )
       );
       p.finally(() => ACTIVE_STREAMS.delete(draftId)).catch(() => {});
       return p;
     },
     finishRich(html, opts = {}) {
       if (!alive()) return Promise.resolve(null);
-      const p = enqueue(() => core.api.sendRichMessage(chatId, { html }, opts));
+      const p = enqueue(() =>
+        callWith429Retry(() => core.api.sendRichMessage(chatId, { html }, opts), "stream.finishRich")
+      );
       p.finally(() => ACTIVE_STREAMS.delete(draftId)).catch(() => {});
       return p;
     },
@@ -160,14 +200,16 @@ function startStream(chatId, stageText) {
       if (!alive()) return Promise.resolve(null);
       const p = enqueue(() => {
         const input = Buffer.isBuffer(photo) ? new InputFile(photo, "image.png") : photo;
-        return core.api.sendPhoto(chatId, input, opts);
+        return callWith429Retry(() => core.api.sendPhoto(chatId, input, opts), "stream.finishPhoto");
       });
       p.finally(() => ACTIVE_STREAMS.delete(draftId)).catch(() => {});
       return p;
     },
     fail(text, opts = {}) {
       if (!alive()) return Promise.resolve(null);
-      const p = enqueue(() => core.api.sendMessage(chatId, text, opts));
+      const p = enqueue(() =>
+        callWith429Retry(() => core.api.sendMessage(chatId, text, opts), "stream.fail")
+      );
       p.finally(() => ACTIVE_STREAMS.delete(draftId)).catch(() => {});
       return p;
     },
