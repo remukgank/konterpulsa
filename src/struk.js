@@ -37,7 +37,7 @@ function generateStruk(info) {
     const hr = `<span ${mono} ${sz(8)} foreground="#E0E0E0">${"─".repeat(42)}</span>`;
 
     const lines = [
-      `<span ${sans} ${sz(18)} weight="bold" foreground="#2E7D32">KONTERKUOTA</span>`,
+      `<span ${sans} ${sz(18)} weight="bold" foreground="#2E7D32">KONTERPULSA</span>`,
       `<span ${mono} ${sz(8)} foreground="#AAAAAA">STRUK PEMBAYARAN</span>`,
       "",
       hr,

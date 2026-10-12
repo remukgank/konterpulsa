@@ -126,6 +126,9 @@ function startStream(chatId, stageText) {
         })
       );
     },
+    finishRich(html, opts = {}) {
+      return enqueue(() => core.api.sendRichMessage(chatId, { html }, opts));
+    },
     finishPhoto(photo, opts = {}) {
       return enqueue(() => {
         const input = Buffer.isBuffer(photo) ? new InputFile(photo, "image.png") : photo;

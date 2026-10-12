@@ -574,8 +574,7 @@ async function doSaldo(msg) {
         { text: "💰 Top Up", data: "dep:new" },
       ],
     ];
-    return spin.finish(html, {
-      parse_mode: "HTML",
+    return spin.finishRich(html, {
       reply_markup: inlineButtons(rows).reply_markup,
     });
   } catch (e) {
@@ -696,8 +695,7 @@ async function doMutasi(msg, m) {
       )
       .join("");
     const html = "<b>🧾 Mutasi Saldo</b>\n<table bordered striped>" + thead + body + "</table>";
-    return spin.finish(html, {
-      parse_mode: "HTML",
+    return spin.finishRich(html, {
       reply_markup: inlineButtons([[{ text: "⬅️ Menu Utama", data: "menu" }]]).reply_markup,
     });
   } catch (e) {
@@ -846,8 +844,7 @@ async function doDeposit(msg) {
       )
       .join("");
     const html = `<b>➕ Deposit (Riwayat)</b>\n<table bordered striped>${thead}${body}</table>`;
-    return spin.finish(html, {
-      parse_mode: "HTML",
+    return spin.finishRich(html, {
       reply_markup: inlineButtons([btns]).reply_markup,
     });
   } catch (e) {
@@ -1441,8 +1438,7 @@ async function handleHistoryDetail(chatId, msg, id) {
       pairs.map(([k, v]) => `<tr><th>${escHtml(k)}</th><td>${escHtml(v)}</td></tr>`).join("") +
       "</table>";
     const btns = [[{ text: "🖨️ Cetak Struk", data: "struk:" + id }], [{ text: "⬅️ Riwayat", data: "menu:riwayat" }]];
-    return spin.finish(html, {
-      parse_mode: "HTML",
+    return spin.finishRich(html, {
       reply_markup: inlineButtons(btns).reply_markup,
     });
   } catch (e) {

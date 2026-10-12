@@ -69,7 +69,7 @@ function parseCatalog(html) {
 }
 
 async function loadCatalog() {
-  const r = await getHTML("/");
+  const r = await getHTML("/order");
   const catalog = parseCatalog(r.text);
   catalog.csrfToken = extractCsrfFromHtml(r.text);
   catalog.status = r.status;
