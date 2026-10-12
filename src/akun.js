@@ -64,8 +64,12 @@ function parseHistoryTable(html) {
   while ((tr = trRe.exec(tbody))) {
     const tds = [...tr[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)].map((x) => x[1]);
     const linkIdx = tds.findIndex((c) => /\/view\/\d+/.test(c));
-    if (linkIdx === -1 || tds.length < linkIdx + 7) continue;
+    if (linkIdx === -1 || tds.length < linkIdx + 6) continue;
     const idM = tds[linkIdx].match(/(?:riwayat-transaksi|history)\/view\/(\d+)/);
+    const lastIdx = tds.length - 1;
+    const lastRaw = tds[lastIdx] || "";
+    const dtM = lastRaw.match(/data-title="([^"]*)"/);
+    const status = lastIdx > linkIdx + 5 ? stripTags(dtM && dtM[1] ? dtM[1] : lastRaw) : "";
     rows.push({
       no: stripTags(tds[0] || ""),
       id: idM ? idM[1] : "",
@@ -75,7 +79,7 @@ function parseHistoryTable(html) {
       noHp: stripTags(tds[linkIdx + 3]),
       harga: stripTags(tds[linkIdx + 4]),
       pembayaran: stripTags(tds[linkIdx + 5]),
-      status: stripTags(tds[linkIdx + 6]),
+      status,
     });
   }
   return rows;

@@ -1393,7 +1393,10 @@ async function doSubmit(chatId, msg, st) {
       pairs.map(([k, v]) => "<tr><th>" + escHtml(k) + "</th><td>" + escHtml(v) + "</td></tr>").join("") +
       "</table>\n" + note;
     clearState(chatId);
-    await spin.finishRich(html, {});
+    await spin.finishRich(
+      html,
+      inlineButtons([[{ text: "🗂 Lihat Riwayat", data: "menu:riwayat" }]])
+    );
     bot.setMessageReaction(chatId, msg.message_id, "🎉").catch(() => {});
     await bot.deleteMessage(chatId, canvas).catch(() => {});
 
