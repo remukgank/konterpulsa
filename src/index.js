@@ -934,6 +934,7 @@ async function doOrder(msg) {
   const st = getState(chatId);
   st.step = "kategori";
   st.cfg = cfg;
+  st.cfgAt = Date.now();
   st.order = {};
 
   const rows = chunk(cfg.categories.map((c) => ({ text: c.label, data: "cat:" + c.key })), 2);
@@ -1179,6 +1180,7 @@ async function handleCatPick(chatId, msg, st, key) {
   if (!cat) return reply(msg, "Kategori tidak ditemukan.");
   st.order.kategori = key;
   st.order.field = cat.field;
+  st.voucherList = null;
 
   const ops = cat.operators || {};
   const keys = Object.keys(ops);
@@ -1193,6 +1195,7 @@ async function handleBackKategori(chatId, msg, st) {
   if (!cfg) return reply(msg, "Sesi expired. Ketik /order untuk mulai lagi.");
   st.step = "kategori";
   st.order = {};
+  st.voucherList = null;
   const rows = chunk(cfg.categories.map((c) => ({ text: c.label, data: "cat:" + c.key })), 2);
   rows.push([{ text: "⬅️ Menu Utama", data: "menu" }]);
   return flowEdit(msg, st, "Pilih *kategori produk*:", rows);
@@ -1207,6 +1210,7 @@ async function handleBackOperator(chatId, msg, st) {
   st.step = "kategori";
   st.order = { kategori };
   st.order.field = cat.field;
+  st.voucherList = null;
   const ops = cat.operators || {};
   const keys = Object.keys(ops);
   const rows = chunk(keys.map((id) => ({ text: ops[id], data: "op:" + id })), 2);
@@ -1216,12 +1220,53 @@ async function handleBackOperator(chatId, msg, st) {
 
 const VOUCHER_PAGE = 20;
 
-function renderVouchers(msg, st) {
+function formatHargaCompact(h) {
+  const n = parseInt(h, 10);
+  return isNaN(n) ? "-" : n.toLocaleString("id-ID");
+}
+
+function voucherBtnLabel(v) {
+  const price = formatHargaCompact(v.harga);
+  const kosong = v.status === 0 ? " (Kosong)" : "";
+  const suffix = " · " + price + kosong;
+  let name = v.nama || "Paket";
+  let label = name + suffix;
+  if (label.length > 64) {
+    const budget = Math.max(64 - suffix.length - 1, 8);
+    name = name.slice(0, budget).replace(/\s+$/, "");
+    label = name + "…" + suffix;
+  }
+  if (label.length > 64) label = label.slice(0, 63) + "…";
+  return label;
+}
+
+function validatorForOp(st, opId) {
+  const vals = (st.cfg && st.cfg.validators) || [];
+  for (const v of vals) {
+    if ((v.operator || []).some((x) => String(x) === String(opId))) return v;
+  }
+  return null;
+}
+
+function checkNomorPrefix(vEntry, nomor) {
+  if (!vEntry || !vEntry.regex) return true;
+  try {
+    const m = String(vEntry.regex).match(/^\/(.*)\/([gimsuy]*)$/);
+    const re = m ? new RegExp(m[1], m[2]) : new RegExp(String(vEntry.regex));
+    if (re.test(nomor)) return true;
+    const pref = (String(vEntry.regex).match(/\d{3,4}/g) || []).slice(0, 5);
+    return { examples: pref.join(" / ") || "08xx" };
+  } catch (e) {
+    return true;
+  }
+}
+
+function renderVouchers(msg, st, notice) {
   const cfg = st.cfg;
   const opId = st.order.operator;
   const list = st.voucherList || (cfg.vouchers[opId] || []);
   if (!list.length) {
-    return flowEdit(msg, st, "Voucher tidak ditemukan untuk provider ini.");
+    return flowEdit(msg, st, (notice ? notice + "\n" : "") + "Voucher tidak ditemukan untuk provider ini.");
   }
   st.voucherList = list;
   const page = st.vouchPage || 0;
@@ -1231,10 +1276,7 @@ function renderVouchers(msg, st) {
   st.vouchPage = cur;
 
   const slice = list.slice(cur * VOUCHER_PAGE, (cur + 1) * VOUCHER_PAGE);
-  const rows = slice.map((v) => {
-    const label = v.nama + (v.status === 0 ? " (Kosong)" : "");
-    return [{ text: label, data: "vch:" + v.id }];
-  });
+  const rows = slice.map((v) => [{ text: voucherBtnLabel(v), data: "vch:" + v.id }]);
 
   const nav = [];
   if (cur > 0) nav.push({ text: "⬅️ Prev", data: "vchp:" + (cur - 1) });
@@ -1244,20 +1286,37 @@ function renderVouchers(msg, st) {
   rows.push([{ text: "⬅️ Provider", data: "back:operator" }]);
 
   const header = total > VOUCHER_PAGE ? ` (${total} paket — pakai halaman)` : "";
-  return flowEdit(msg, st, `Provider *${cfg.operators[opId] || opId}*\nPilih *paket*${header}:`, rows);
+  return flowEdit(msg, st, (notice ? notice + "\n" : "") + `Provider *${cfg.operators[opId] || opId}*\nPilih *paket*${header}:`, rows);
 }
 
 async function handleOpPick(chatId, msg, st, opId) {
   st.order.operator = opId;
+  st.voucherList = null;
   st.vouchPage = 0;
   return renderVouchers(msg, st);
 }
 
 async function handleVchPick(chatId, msg, st, vchId) {
-  const cfg = st.cfg;
+  let cfg = st.cfg;
   const opId = st.order.operator;
-  const v = (cfg.vouchers[opId] || []).find((x) => x.id === vchId);
-  if (!v) return reply(msg, "Paket tidak ditemukan.");
+  if (st.cfgAt && Date.now() - st.cfgAt > 15 * 60 * 1000) {
+    try {
+      const fresh = await order.getOrderConfig();
+      if (fresh && fresh.status === 200) {
+        st.cfg = fresh;
+        st.cfgAt = Date.now();
+        cfg = fresh;
+      }
+    } catch (e) {
+      /* config lama masih dipakai */
+    }
+  }
+  let v = (cfg.vouchers[opId] || []).find((x) => x.id === vchId);
+  if (!v) {
+    st.voucherList = cfg.vouchers[opId] || [];
+    st.vouchPage = 0;
+    return renderVouchers(msg, st, "⚠️ Paket sudah tidak tersedia — daftar diperbarui, pilih ulang:");
+  }
   if (v.status === 0) return reply(msg, "Paket sedang kosong, pilih yang lain.");
 
   st.order.voucher = vchId;
@@ -1284,7 +1343,9 @@ async function handleDirect(chatId, msg, st, payload) {
       return reply(msg, "Gagal memuat config: " + e.message);
     }
     st.cfg = cfg;
+    st.cfgAt = Date.now();
   }
+  st.cfgAt = st.cfgAt || Date.now();
   const cat = order.findCategoryForOperator(cfg, opId);
   if (!cat) return reply(msg, "Kategori tidak ditemukan untuk operator ini.");
   const v = (cfg.vouchers[opId] || []).find((x) => x.id === vchId);
@@ -1417,9 +1478,21 @@ async function doSubmit(chatId, msg, st) {
     return;
   } else {
     const errs = submit.json && Array.isArray(submit.json.errors) ? submit.json.errors : ["Gagal memproses order (status " + submit.status + ")"];
-    out = "❌ *Order gagal:*\n" + errs.map((e) => "• " + e).join("\n") + "\n\nSilakan coba lagi /order. Captcha/CSRF sudah diperbarui otomatis.";
-    clearState(chatId);
+    const errText = errs.join(" ").toLowerCase();
+    const captchaFail = submit.status === 419 || /captcha|kode keamanan|csrf|token/.test(errText);
     await bot.deleteMessage(chatId, canvas).catch(() => {});
+    if (captchaFail && st.order && st.order.pembayaran) {
+      st.order.captcha = "";
+      st.step = "wait_captcha";
+      await spin.fail(
+        "⚠️ *Captcha salah / verifikasi kedaluwarsa.*\nGambar baru dikirim di bawah — ketik kodenya lagi. Order tidak perlu diulang.",
+        { parse_mode: "Markdown" }
+      );
+      await sendCaptcha(chatId);
+      return;
+    }
+    out = "❌ *Order gagal:*\n" + errs.map((e) => "• " + e).join("\n") + "\n\nSilakan coba lagi /order.";
+    clearState(chatId);
     return spin.fail(out, { parse_mode: "Markdown" });
   }
 }
@@ -1626,21 +1699,28 @@ bot.on("message", async (msg) => {
     if (!st.order.values) st.order.values = {};
     const field = st.order.field || "nomor_hp";
     const key = field === "id_plgn" ? "id_plgn" : "nomor_hp";
-    
-    // Validasi input
-    const cleaned = text.replace(/[^0-9]/g, "");
+
+    let cleaned = text.replace(/[^0-9]/g, "");
     if (key === "nomor_hp") {
-      // Validasi nomor HP: harus 10-13 digit
+      if (cleaned.startsWith("62") && cleaned.length >= 11) cleaned = "0" + cleaned.slice(2);
       if (!/^[0-9]{10,13}$/.test(cleaned)) {
         return reply(msg, "⚠️ Nomor HP tidak valid. Masukkan 10-13 digit angka.\nContoh: 081234567890");
       }
+      const vx = validatorForOp(st, st.order.operator);
+      const vres = vx ? checkNomorPrefix(vx, cleaned) : true;
+      if (vres !== true) {
+        return reply(
+          msg,
+          "⚠️ Nomor *" + cleaned + "* tidak cocok untuk *" + (vx.nama || "provider ini") + "*.\nPrefix contoh: `" + vres.examples + "`\n\nKetik ulang nomor yang benar (atau /batal):",
+          { parse_mode: "Markdown" }
+        );
+      }
     } else {
-      // Validasi ID Pelanggan: harus 10-15 digit
       if (!/^[0-9]{10,15}$/.test(cleaned)) {
         return reply(msg, "⚠️ ID Pelanggan/ID Game tidak valid. Masukkan 10-15 digit angka.");
       }
     }
-    
+
     st.order.values[key] = cleaned;
     const pay = st.cfg.payments;
     const rows = [];
@@ -1661,7 +1741,7 @@ bot.on("message", async (msg) => {
       ["Jenis", orderCatLabel(st, st.order.kategori)],
       ["Paket", op + " — " + st.order.voucherName],
       ["Harga", formatHarga(st.order.harga)],
-      ["Nomor", text],
+      ["Nomor", cleaned],
     ];
     return flowNewRich(
       msg,

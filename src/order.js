@@ -1,7 +1,7 @@
 "use strict";
 
 const { getHTML, request } = require("./konterApi");
-const { extractVar, parseCatalog, extractSelectOptions, extractCsrfFromHtml } = require("./harga");
+const { extractVar, parseCatalog, extractSelectOptions, extractCsrfFromHtml, decodeHtmlEntities } = require("./harga");
 
 const BASE_URL = require("./config").BASE_URL;
 
@@ -31,7 +31,7 @@ function parseCategories(html) {
   while ((o = optRe.exec(sel))) {
     const val = o[1];
     if (!val) continue;
-    const label = o[2].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+    const label = decodeHtmlEntities(o[2].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim());
     const blk = categoryBlock(html, val, allKeys) || "";
     cats.push({
       key: val,
@@ -54,12 +54,14 @@ function categoryFieldFromBlock(blk) {
 async function getOrderConfig() {
   const r = await getHTML("/order");
   const catalog = parseCatalog(r.text);
+  const validators = extractVar(r.text, "validator") || [];
   return {
     status: r.status,
     categories: parseCategories(r.text),
     operators: catalog.operators,
     vouchers: catalog.vouchers,
     payments: catalog.payments,
+    validators,
     csrfToken: extractCsrfFromHtml(r.text),
   };
 }

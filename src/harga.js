@@ -38,6 +38,17 @@ function extractVar(html, varName) {
   return null;
 }
 
+function decodeHtmlEntities(s) {
+  return String(s)
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;|&apos;/g, "'")
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(+d));
+}
+
 function extractSelectOptions(fragment, name) {
   const re = new RegExp(
     "<select[^>]*name=\"" + name + "\"[^>]*>([\\s\\S]*?)</select>",
@@ -51,7 +62,7 @@ function extractSelectOptions(fragment, name) {
     let o;
     while ((o = optRe.exec(inner))) {
       const val = o[1];
-      let label = o[2].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+      let label = decodeHtmlEntities(o[2].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim());
       if (val !== "" && label !== "") map[val] = label;
     }
   }
@@ -109,4 +120,4 @@ function formatHarga(harga) {
   return "Rp " + n.toLocaleString("id-ID");
 }
 
-module.exports = { loadCatalog, parseCatalog, searchProducts, formatHarga, extractCsrfFromHtml, extractSelectOptions };
+module.exports = { loadCatalog, parseCatalog, searchProducts, formatHarga, extractCsrfFromHtml, extractSelectOptions, extractVar, decodeHtmlEntities };
