@@ -1480,6 +1480,7 @@ async function handleStruk(chatId, msg, id) {
   const spin = await startStream(chatId, "Membuat struk pembayaran...");
   chatAction(chatId, "upload_photo");
   try {
+    const entry = ledger.get(idn);
     const d = await akun.getHistoryDetail(idn);
     const sell = roundSell(d.harga);
     const buf = await generateStruk({
@@ -1489,11 +1490,12 @@ async function handleStruk(chatId, msg, id) {
       provider: d.provider,
       nomor: d.noHp,
       idPelanggan: d.idPelanggan,
+      pelanggan: entry && entry.user ? entry.user : "",
       metode: d.pembayaran,
       harga: formatRp(sell),
       snRef: d.snRef,
       token: d.token,
-      status: d.statusPengisian,
+      status: d.statusPengisian || d.statusPembayaran,
     });
     if (!buf) return spin.fail("Gagal membuat gambar struk.");
     return spin.finishPhoto(buf, {

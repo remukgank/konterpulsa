@@ -103,7 +103,7 @@ async function getHistoryDetail(id) {
     nominal: kv["Nominal"] || "",
     idPelanggan: kv["ID Pelanggan"] || "",
     noHp: kv["Nomor HP"] || "",
-    harga: kv["Harga"] || "",
+    harga: kv["Harga"] || ((r.text.match(/id="input"[^>]*placeholder="([^"]+)"/) || [])[1] || ""),
     pembayaran: kv["Pembayaran"] || "",
     tanggal: kv["Tanggal Pembelian"] || "",
     tanggalBayar: kv["Tanggal Pembayaran"] || "",
