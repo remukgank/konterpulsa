@@ -1,6 +1,6 @@
 "use strict";
 
-const { initBot, isAllowed, guard, reply, inlineButtons, removeKeyboard, startStream } = require("../bot/telegram");
+const { initBot, isAllowed, guard, reply, inlineButtons, removeKeyboard, startStream, stopStream } = require("../bot/telegram");
 const { loadCatalog, searchProducts, formatHarga } = require("./harga");
 const akun = require("./akun");
 const order = require("./order");
@@ -31,6 +31,13 @@ const BOT_COMMANDS = [
 ];
 bot.setMyCommands(BOT_COMMANDS).catch((e) => console.log("[CMD] setMyCommands gagal:", e.message));
 bot.setChatMenuButton({ menu_button: { type: "commands" } }).catch((e) => console.log("[CMD] setChatMenuButton gagal:", e.message));
+bot.on("stopped_message_generation", (upd) => {
+  const s = upd && upd.stopped_message_generation;
+  if (s) {
+    stopStream(s.draft_id);
+    console.log("[STREAM] draft", s.draft_id, "dihentikan user");
+  }
+});
 
 const states = new Map();
 const STATE_TTL = 30 * 60 * 1000; // 30 minutes
@@ -162,24 +169,6 @@ async function flowEdit(msg, st, text, rows) {
   }
 }
 
-async function flowNew(msg, st, text, rows) {
-  if (!st) st = getState(msg.chat.id);
-  const kb =
-    rows && rows.length
-      ? inlineButtons(rows).reply_markup
-      : { inline_keyboard: [] };
-  if (st.flowMsg) await bot.deleteMessage(msg.chat.id, st.flowMsg).catch(() => {});
-  const body = { parse_mode: "Markdown", reply_markup: kb, reply_to_message_id: msg.message_id };
-  let sent;
-  try {
-    sent = await reply(msg, text, body);
-  } catch (e) {
-    sent = await bot.sendMessage(msg.chat.id, text, { reply_markup: kb, reply_to_message_id: msg.message_id });
-  }
-  st.flowMsg = sent.message_id;
-  return sent;
-}
-
 async function flowNewRich(msg, st, html, fallback, rows) {
   if (!st) st = getState(msg.chat.id);
   const kb =
@@ -302,13 +291,14 @@ async function qrisTick(chatId, entry) {
         });
       }
       if (/sukses/i.test(stNow)) {
-        await reply(
+        const m = await reply(
           { chat: { id: chatId } },
           isDep
             ? "✅ *Deposit terbayar!*\nTrx *#" + entry.trx + "* — Status: Sukses\nCek /deposit."
             : "✅ *Pembayaran diterima & pengisian sukses!*\nTrx *#" + entry.trx + "*\nStatus: " + stNow,
           { parse_mode: "Markdown" }
         );
+        if (m && m.message_id) bot.setMessageReaction(chatId, m.message_id, "👍").catch(() => {});
         clearTimeout(entry.timer);
         delete QRIS_POLLS[chatId];
         return;
@@ -402,7 +392,7 @@ function confirmButton(id) {
 
 const HELP_NORMAL = [
   "❓ <b>Bantuan</b>",
-  "<blockquote>Ketik /batal kapan saja untuk membatalkan proses yang sedang berjalan.</blockquote>",
+  "<blockquote expandable>Ketik /batal kapan saja untuk membatalkan proses yang sedang berjalan. Tips &amp; info penting ada di sini — ketuk untuk buka.</blockquote>",
   "",
   "🛒 <b>Belanja</b>",
   "• <code>/order</code> — mulai transaksi",
@@ -420,7 +410,7 @@ const HELP_NORMAL = [
 
 const HELP_ADMIN = [
   "❓ <b>Bantuan — Admin</b>",
-  "<blockquote>Ketik /batal kapan saja untuk membatalkan proses yang sedang berjalan.</blockquote>",
+  "<blockquote expandable>Ketik /batal kapan saja untuk membatalkan proses yang sedang berjalan. Tips &amp; info penting ada di sini — ketuk untuk buka.</blockquote>",
   "",
   "🛒 <b>Belanja</b>",
   "• <code>/order</code> — mulai transaksi",
@@ -598,10 +588,11 @@ function statusIcon(st) {
   return "▫️";
 }
 
-function renderRiwayat(msg, adm, list) {
+function renderRiwayat(msg, adm, list, spin) {
   const slice = list.slice(0, 10);
   if (!slice.length) {
-    return reply(msg, "Belum ada transaksi.", inlineButtons([[{ text: "⬅️ Menu", data: "menu" }]]));
+    const opts = inlineButtons([[{ text: "⬅️ Menu", data: "menu" }]]);
+    return spin ? spin.fail("Belum ada transaksi.", opts) : reply(msg, "Belum ada transaksi.", opts);
   }
   const btns = [];
   for (let i = 0; i < slice.length; i++) {
@@ -633,9 +624,13 @@ function renderRiwayat(msg, adm, list) {
     })
     .join("");
   const html = `<b>${escHtml(head.replace(/\*/g, ""))}</b>\n<table bordered striped>${thead}${body}</table>`;
+  const opts = {
+    reply_markup: inlineButtons(btns).reply_markup,
+  };
+  if (spin) return spin.finishRich(html, opts);
   return bot.sendRichMessage(msg.chat.id, html, head + "\n\n" + lines.join("\n\n"), {
     parse_mode: "Markdown",
-    reply_markup: inlineButtons(btns).reply_markup,
+    ...opts,
   });
 }
 
@@ -646,6 +641,7 @@ async function doRiwayat(msg) {
   if (!adm) {
     return renderRiwayat(msg, adm, ledger.listByChat(chatId, 10));
   }
+  const spin = await startStream(chatId, "Mengambil riwayat transaksi...");
   // admin: gabung ledger + transaksi akun (web), dedup per id transaksi
   const led = ledger.listAll(100);
   const byTrx = new Map(led.map((e) => [String(e.trx), e]));
@@ -671,7 +667,7 @@ async function doRiwayat(msg) {
   }
   const seen = new Set(web.map((e) => String(e.trx)));
   const extra = led.filter((e) => !seen.has(String(e.trx)));
-  return renderRiwayat(msg, adm, web.concat(extra).sort((a, b) => String(b.trx).localeCompare(String(a.trx))));
+  return renderRiwayat(msg, adm, web.concat(extra).sort((a, b) => String(b.trx).localeCompare(String(a.trx))), spin);
 }
 bot.onText(/^\/riwayat(?:\s+(\d+))?$/, doRiwayat);
 
@@ -933,6 +929,7 @@ async function doOrder(msg) {
   const rows = chunk(cfg.categories.map((c) => ({ text: c.label, data: "cat:" + c.key })), 2);
   rows.push([{ text: "⬅️ Menu Utama", data: "menu" }]);
   const sent = await spin.finish("Pilih *kategori produk*:", { parse_mode: "Markdown", ...inlineButtons(rows) });
+  if (!sent) return null;
   st.flowMsg = sent.message_id;
   return sent;
 }
@@ -953,6 +950,7 @@ async function doKirimQr(msg, trx) {
   const chatId = msg.chat.id;
   const id = parseId(String(trx));
   const entry = ledger.get(id);
+  chatAction(chatId, "upload_photo");
   const spin = await startStream(chatId, "Mengambil QR untuk #" + id + "...");
   const s = await buildQrSet(id, entry);
   if (!s.buffer) return spin.fail("QR belum tersedia: " + (s.error || "belum ada sesi pembayaran."));
@@ -1028,6 +1026,7 @@ async function handleKonfirm(chatId, msg, trx) {
   const entry = isDep ? depLedger.get(id) : ledger.get(id);
   const target = entry ? Number(entry.chat) : chatId;
   if (/sukses/i.test(st)) {
+    bot.setMessageReaction(chatId, msg.message_id, "👍").catch(() => {});
     if (target !== chatId) {
       await reply(
         { chat: { id: target } },
@@ -1315,7 +1314,7 @@ async function doSubmit(chatId, msg, st) {
   const o = st.order;
   const canvas = st.flowMsg;
   const payName = (st.cfg.payments[o.pembayaran] && st.cfg.payments[o.pembayaran].nama) || o.pembayaran;
-  const proc = await reply({ chat: { id: chatId } }, "Memproses order...");
+  const spin = await startStream(chatId, "Memproses order...");
   // ambil csrf token segar dari home agar cocok dengan cookie
   const fresh = await order.getOrderConfig();
   const csrf = fresh.csrfToken || st.cfg.csrfToken;
@@ -1328,7 +1327,6 @@ async function doSubmit(chatId, msg, st) {
     captcha: o.captcha,
     csrfToken: csrf,
   });
-  await bot.deleteMessage(chatId, proc.message_id).catch(() => {})
 
   let out;
   if (submit.json && submit.json.success) {
@@ -1375,15 +1373,13 @@ async function doSubmit(chatId, msg, st) {
       "<b>✅ Order Sukses!</b>\n<table bordered>" +
       pairs.map(([k, v]) => "<tr><th>" + escHtml(k) + "</th><td>" + escHtml(v) + "</td></tr>").join("") +
       "</table>\n" + note;
-    const fallback =
-      "✅ *Order Sukses!*\n" +
-      pairs.map(([k, v]) => k + ": " + fmt(v)).join("\n") +
-      "\n\n" + note;
     clearState(chatId);
-    await bot.sendRichMessage(chatId, html, fallback, { parse_mode: "Markdown" });
+    await spin.finishRich(html, {});
+    bot.setMessageReaction(chatId, msg.message_id, "🎉").catch(() => {});
     await bot.deleteMessage(chatId, canvas).catch(() => {});
 
     if (o.pembayaran === "qris_livin_nt" && id) {
+      chatAction(chatId, "upload_photo");
       const s = await buildQrSet(id, null);
       if (s.buffer) {
         await bot.sendPhoto(chatId, s.buffer, {
@@ -1402,8 +1398,8 @@ async function doSubmit(chatId, msg, st) {
     out = "❌ *Order gagal:*\n" + errs.map((e) => "• " + e).join("\n") + "\n\nSilakan coba lagi /order. Captcha/CSRF sudah diperbarui otomatis.";
     clearState(chatId);
     await bot.deleteMessage(chatId, canvas).catch(() => {});
+    return spin.fail(out, { parse_mode: "Markdown" });
   }
-  return reply({ chat: { id: chatId } }, out, { parse_mode: "Markdown" });
 }
 
 /* ==================== detail riwayat ==================== */
@@ -1455,6 +1451,7 @@ async function handleStruk(chatId, msg, id) {
     }
   }
   const spin = await startStream(chatId, "Membuat struk pembayaran...");
+  chatAction(chatId, "upload_photo");
   try {
     const d = await akun.getHistoryDetail(idn);
     const sell = roundSell(d.harga);

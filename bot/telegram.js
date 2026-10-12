@@ -46,6 +46,10 @@ function createCompatibilityAdapter(coreBot) {
       });
     },
 
+    setMessageReaction(chatId, messageId, emoji) {
+      return coreBot.api.setMessageReaction(chatId, messageId, [{ type: "emoji", emoji }]);
+    },
+
     editMessageText(chatId, messageId, text, options = {}) {
       return coreBot.api.editMessageText(chatId, messageId, text, options);
     },
@@ -100,8 +104,17 @@ function createCompatibilityAdapter(coreBot) {
  * finish() mengirim pesan final yang persist — draft otomatis hilang.
  * Semua operasi diserialisasi agar draft selalu terkirim sebelum pesan final.
  */
+const ACTIVE_STREAMS = new Map();
+
+function stopStream(draftId) {
+  const s = ACTIVE_STREAMS.get(Number(draftId));
+  if (s) s.cancelled = true;
+}
+
 function startStream(chatId, stageText) {
   const draftId = Math.floor(Math.random() * 1e9) + 1;
+  const state = { cancelled: false };
+  ACTIVE_STREAMS.set(draftId, state);
   let chain = Promise.resolve();
   const enqueue = (fn) => {
     const p = chain.then(fn);
@@ -109,34 +122,54 @@ function startStream(chatId, stageText) {
     return p;
   };
   const draft = (text) => {
-    enqueue(() => core.api.sendMessageDraft(chatId, draftId, text)).catch(() => {});
+    enqueue(() => core.api.sendMessageDraft(chatId, draftId, text, { can_stop: true })).catch(() => {});
+  };
+  const alive = () => {
+    if (state.cancelled) {
+      ACTIVE_STREAMS.delete(draftId);
+      return false;
+    }
+    return true;
   };
 
   draft(typeof stageText === "string" ? stageText : "");
 
   return {
     stage(text) {
+      if (state.cancelled) return;
       draft(text);
     },
     finish(text, opts = {}) {
-      return enqueue(() =>
+      if (!alive()) return Promise.resolve(null);
+      const p = enqueue(() =>
         core.api.sendMessage(chatId, text, {
           link_preview_options: { is_disabled: true },
           ...opts,
         })
       );
+      p.finally(() => ACTIVE_STREAMS.delete(draftId)).catch(() => {});
+      return p;
     },
     finishRich(html, opts = {}) {
-      return enqueue(() => core.api.sendRichMessage(chatId, { html }, opts));
+      if (!alive()) return Promise.resolve(null);
+      const p = enqueue(() => core.api.sendRichMessage(chatId, { html }, opts));
+      p.finally(() => ACTIVE_STREAMS.delete(draftId)).catch(() => {});
+      return p;
     },
     finishPhoto(photo, opts = {}) {
-      return enqueue(() => {
+      if (!alive()) return Promise.resolve(null);
+      const p = enqueue(() => {
         const input = Buffer.isBuffer(photo) ? new InputFile(photo, "image.png") : photo;
         return core.api.sendPhoto(chatId, input, opts);
       });
+      p.finally(() => ACTIVE_STREAMS.delete(draftId)).catch(() => {});
+      return p;
     },
     fail(text, opts = {}) {
-      return enqueue(() => core.api.sendMessage(chatId, text, opts));
+      if (!alive()) return Promise.resolve(null);
+      const p = enqueue(() => core.api.sendMessage(chatId, text, opts));
+      p.finally(() => ACTIVE_STREAMS.delete(draftId)).catch(() => {});
+      return p;
     },
   };
 }
@@ -211,6 +244,7 @@ module.exports = {
   inlineButtons,
   removeKeyboard,
   startStream,
+  stopStream,
   get bot() {
     return bot;
   },
