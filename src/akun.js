@@ -113,10 +113,10 @@ async function getHistoryDetail(id) {
 
 async function getPaymentQr(trx) {
   const view = await getHTML("/akun/riwayat-transaksi/view/" + encodeURIComponent(trx));
-  const m = (view.text || "").match(/\/payment\/qris_livin_nt\/get_qr\/(\d+)/);
+  const m = (view.text || "").match(/(\/payment\/[^"'\s]*get_qr\/\d+)/);
   if (!m) return { ok: false, error: "Sesi QR tidak ditemukan." };
   const session = m[1];
-  const qr = await getHTML("/payment/qris_livin_nt/get_qr/" + session);
+  const qr = await getHTML(m[1]);
   const t = qr.text || "";
   if (/^ERROR/.test(t)) return { ok: false, error: t.slice(0, 160), session };
   let buffer = null;
@@ -258,10 +258,11 @@ async function getDepositDetail(id) {
 async function getDepositQr(depId) {
   const view = await getHTML("/akun/deposit/view/" + encodeURIComponent(depId));
   const t = view.text || "";
-  const m = t.match(/\/payment\/[^"']*get_qr\/(\d+)/) || t.match(/get_qr\/(\d+)/);
-  if (!m) return { ok: false, error: "QR belum tersedia untuk deposit ini." };
-  const session = m[1];
-  const qr = await getHTML("/payment/qris_livin_nt/get_qr/" + session);
+  const full = t.match(/\/payment\/[^"']*get_qr\/\d+/);
+  const sess = t.match(/get_qr\/(\d+)/);
+  if (!full && !sess) return { ok: false, error: "QR belum tersedia untuk deposit ini." };
+  const session = full ? full[0] : "/payment/qris_dana/get_qr/" + sess[1];
+  const qr = await getHTML(session);
   const qt = qr.text || "";
   if (/^ERROR/.test(qt)) return { ok: false, error: qt.slice(0, 160) };
   let buffer = null;

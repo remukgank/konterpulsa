@@ -388,6 +388,15 @@ function confirmButton(id) {
   return [[{ text: "✅ Konfirmasi Pembayaran", data: "konfirm:" + id }]];
 }
 
+function qrisKey(payments) {
+  if (!payments || typeof payments !== "object") return "";
+  return Object.keys(payments).find((k) => /^qris/i.test(k)) || "";
+}
+
+function isQrisPay(key) {
+  return /^qris/i.test(String(key || ""));
+}
+
 /* ==================== Menu utama + reply keyboard ==================== */
 
 const HELP_NORMAL = [
@@ -884,6 +893,7 @@ async function handleDepPay(chatId, msg, st, methodKey) {
       user: userName(msg) || String(chatId),
       jumlah: formatHarga(amount),
       metode: mlabel,
+      metodeKey: methodKey,
       tanggal: new Date().toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" }),
       createdAt: Date.now(),
     });
@@ -985,11 +995,14 @@ async function handleKonfirm(chatId, msg, trx) {
     }
   }
   const spin = await startStream(chatId, "Mengirim konfirmasi pembayaran #" + id + "...");
+  const payEnt = isDep ? depLedger.get(id) : ledger.get(id);
+  const rawKey = payEnt ? (isDep ? payEnt.metodeKey : payEnt.pembayaranKey) || "" : "";
+  const payKey = /^[a-z0-9_]+$/i.test(rawKey) ? rawKey : "qris_dana";
   let r;
   try {
     r = await request(
       "GET",
-      (isDep ? "/payment/qris_livin_nt/deposit/" : "/payment/qris_livin_nt/trx/") + encodeURIComponent(id)
+      (isDep ? "/payment/" + payKey + "/deposit/" : "/payment/" + payKey + "/trx/") + encodeURIComponent(id)
     );
   } catch (e) {
     return spin.fail("Gagal konfirmasi: " + e.message);
@@ -1355,8 +1368,9 @@ async function doSubmit(chatId, msg, st) {
       nomor,
       harga: formatHarga(o.harga),
       pembayaran: payName,
+      pembayaranKey: o.pembayaran,
       tanggal: new Date().toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" }),
-      statusPembayaran: o.pembayaran === "qris_livin_nt" ? "Pending" : "Lunas",
+      statusPembayaran: isQrisPay(o.pembayaran) ? "Pending" : "Lunas",
       statusPengisian: "Menunggu proses",
       status: "Pending",
       createdAt: Date.now(),
@@ -1370,10 +1384,10 @@ async function doSubmit(chatId, msg, st) {
       ["Pembayaran", payName],
       ["ID Transaksi", String(id || "")],
       ["Waktu", new Date().toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" })],
-      ["Status Bayar", o.pembayaran === "qris_livin_nt" ? "Pending" : "Lunas"],
+      ["Status Bayar", isQrisPay(o.pembayaran) ? "Pending" : "Lunas"],
       ["Status Isi", "Menunggu proses"],
     ];
-    const note = o.pembayaran === "qris_livin_nt" ? "Kirim QR untuk pembayaran..." : "Cek status: /riwayat";
+    const note = isQrisPay(o.pembayaran) ? "Kirim QR untuk pembayaran..." : "Cek status: /riwayat";
     const html =
       "<b>✅ Order Sukses!</b>\n<table bordered>" +
       pairs.map(([k, v]) => "<tr><th>" + escHtml(k) + "</th><td>" + escHtml(v) + "</td></tr>").join("") +
@@ -1383,7 +1397,7 @@ async function doSubmit(chatId, msg, st) {
     bot.setMessageReaction(chatId, msg.message_id, "🎉").catch(() => {});
     await bot.deleteMessage(chatId, canvas).catch(() => {});
 
-    if (o.pembayaran === "qris_livin_nt" && id) {
+    if (isQrisPay(o.pembayaran) && id) {
       chatAction(chatId, "upload_photo");
       const s = await buildQrSet(id, null);
       if (s.buffer) {
@@ -1626,7 +1640,8 @@ bot.on("message", async (msg) => {
     const pay = st.cfg.payments;
     const rows = [];
     if (isAllowed(chatId) && pay.balance) rows.push([{ text: "Saldo Akun (" + formatHarga(st.order.harga) + ")", data: "pay:balance" }]);
-    if (pay.qris_livin_nt) rows.push([{ text: "QRIS (" + formatHarga(st.order.harga) + ")", data: "pay:qris_livin_nt" }]);
+    const qk = qrisKey(pay);
+    if (qk) rows.push([{ text: "QRIS (" + formatHarga(st.order.harga) + ")", data: "pay:" + qk }]);
     if (!rows.length) {
       bot.editMessageText(chatId, st.flowMsg, "⚠️ Pembayaran tidak tersedia.", {
         parse_mode: "Markdown",
