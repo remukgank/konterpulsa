@@ -917,6 +917,21 @@ async function handleDepPay(chatId, msg, st, methodKey) {
 
 /* ==================== /order (interactive, login) ==================== */
 
+const ORDER_MENU = [
+  { key: "pulsa", label: "📱 Pulsa" },
+  { key: "paket_internet", label: "📦 Paket Internet" },
+  { key: "game", label: "🎮 Topup Game" },
+  { key: "token_listrik", label: "⚡ Token PLN" },
+  { key: "ewallet_bebas_nominal", label: "💰 Topup e-Wallet" },
+];
+
+function orderMenuRows(cfg) {
+  return chunk(
+    ORDER_MENU.filter((x) => cfg.categories.some((c) => c.key === x.key)).map((x) => ({ text: x.label, data: "cat:" + x.key })),
+    2
+  );
+}
+
 async function doOrder(msg) {
   const chatId = msg.chat.id;
   if (isOngoing(chatId)) {
@@ -936,8 +951,9 @@ async function doOrder(msg) {
   st.cfg = cfg;
   st.cfgAt = Date.now();
   st.order = {};
+  st.voucherList = null;
 
-  const rows = chunk(cfg.categories.map((c) => ({ text: c.label, data: "cat:" + c.key })), 2);
+  const rows = orderMenuRows(cfg);
   rows.push([{ text: "⬅️ Menu Utama", data: "menu" }]);
   const sent = await spin.finish("Pilih *kategori produk*:", { parse_mode: "Markdown", ...inlineButtons(rows) });
   if (!sent) return null;
@@ -1196,7 +1212,7 @@ async function handleBackKategori(chatId, msg, st) {
   st.step = "kategori";
   st.order = {};
   st.voucherList = null;
-  const rows = chunk(cfg.categories.map((c) => ({ text: c.label, data: "cat:" + c.key })), 2);
+  const rows = orderMenuRows(cfg);
   rows.push([{ text: "⬅️ Menu Utama", data: "menu" }]);
   return flowEdit(msg, st, "Pilih *kategori produk*:", rows);
 }
