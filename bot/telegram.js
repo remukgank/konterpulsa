@@ -2,6 +2,7 @@
 
 const { Bot, InputFile } = require("grammy");
 const { BOT_TOKEN, ALLOWED_CHAT_IDS } = require("../src/config");
+const { sanitizeButtonText, sanitizeCallbackData } = require("../src/util");
 
 let bot = null;
 let core = null;
@@ -159,11 +160,12 @@ function startStream(chatId, stageText) {
     ).catch(() => {});
   };
   const alive = () => {
-    if (state.cancelled) {
-      ACTIVE_STREAMS.delete(draftId);
-      return false;
-    }
-    return true;
+    // [DOCS] sendMessageDraft: draft adalah preview ephemeral 30 detik yang
+    // otomatis hilang begitu bot mengirim pesan. Tombol "stop" hanya menghentikan
+    // draft BERJALAN — hasil final tetap harus dikirim (tidak boleh丢弃).
+    if (!state.cancelled) return true;
+    console.log("[STREAM] draft " + draftId + " di-stop user; hasil final tetap dikirim");
+    return false;
   };
 
   draft(typeof stageText === "string" ? stageText : "");
@@ -173,8 +175,10 @@ function startStream(chatId, stageText) {
       if (state.cancelled) return;
       draft(text);
     },
+    isCancelled() {
+      return state.cancelled;
+    },
     finish(text, opts = {}) {
-      if (!alive()) return Promise.resolve(null);
       const p = enqueue(() =>
         callWith429Retry(
           () =>
@@ -185,32 +189,41 @@ function startStream(chatId, stageText) {
           "stream.finish"
         )
       );
-      p.finally(() => ACTIVE_STREAMS.delete(draftId)).catch(() => {});
+      p.finally(() => {
+        alive();
+        ACTIVE_STREAMS.delete(draftId);
+      }).catch(() => {});
       return p;
     },
     finishRich(html, opts = {}) {
-      if (!alive()) return Promise.resolve(null);
       const p = enqueue(() =>
         callWith429Retry(() => core.api.sendRichMessage(chatId, { html }, opts), "stream.finishRich")
       );
-      p.finally(() => ACTIVE_STREAMS.delete(draftId)).catch(() => {});
+      p.finally(() => {
+        alive();
+        ACTIVE_STREAMS.delete(draftId);
+      }).catch(() => {});
       return p;
     },
     finishPhoto(photo, opts = {}) {
-      if (!alive()) return Promise.resolve(null);
       const p = enqueue(() => {
         const input = Buffer.isBuffer(photo) ? new InputFile(photo, "image.png") : photo;
         return callWith429Retry(() => core.api.sendPhoto(chatId, input, opts), "stream.finishPhoto");
       });
-      p.finally(() => ACTIVE_STREAMS.delete(draftId)).catch(() => {});
+      p.finally(() => {
+        alive();
+        ACTIVE_STREAMS.delete(draftId);
+      }).catch(() => {});
       return p;
     },
     fail(text, opts = {}) {
-      if (!alive()) return Promise.resolve(null);
       const p = enqueue(() =>
         callWith429Retry(() => core.api.sendMessage(chatId, text, opts), "stream.fail")
       );
-      p.finally(() => ACTIVE_STREAMS.delete(draftId)).catch(() => {});
+      p.finally(() => {
+        alive();
+        ACTIVE_STREAMS.delete(draftId);
+      }).catch(() => {});
       return p;
     },
   };
@@ -259,19 +272,42 @@ function reply(msg, text, opts) {
   return bot.sendMessage(msg.chat.id, text, opts);
 }
 
+/**
+ * Bangun reply_markup inline keyboard dengan sanitasi:
+ * - text selalu 1..64 karakter (tidak pernah kosong) — mencegah
+ *   400 "can't parse InlineKeyboardButton: Can't find field \"text\"".
+ * - callback_data selalu 1..64 byte; yang invalid menjadi "noop".
+ * - tombol null/baris kosong dibuang.
+ */
 function inlineButtons(rows) {
-  const nested = rows.map((row) => (Array.isArray(row) ? row : [row]));
-  return {
-    reply_markup: {
-      inline_keyboard: nested.map((row) =>
-        row.map((b) =>
-          b.url
-            ? { text: b.text, url: b.url }
-            : { text: b.text, callback_data: b.data }
-        )
-      ),
-    },
-  };
+  const nested = (rows || []).map((row) => (Array.isArray(row) ? row : [row]));
+  const keyboard = [];
+  for (const row of nested) {
+    const out = [];
+    for (const b of row) {
+      if (!b || typeof b !== "object") {
+        console.warn("[KB] tombol diabaikan (bukan objek):", JSON.stringify(b));
+        continue;
+      }
+      const rawText = b.text;
+      const text = sanitizeButtonText(rawText, "Menu");
+      if (!String(rawText == null ? "" : rawText).trim()) {
+        console.warn("[KB] label kosong diganti \"Menu\"; data=" + JSON.stringify(b.data));
+      }
+      if (b.url) {
+        out.push({ text, url: b.url });
+        continue;
+      }
+      const rawData = b.data;
+      const data = sanitizeCallbackData(rawData);
+      if (data === "noop" && String(rawData == null ? "" : rawData)) {
+        console.warn("[KB] callback_data invalid/terlalu panjang -> noop:", JSON.stringify(rawData).slice(0, 120));
+      }
+      out.push({ text, callback_data: data });
+    }
+    if (out.length) keyboard.push(out);
+  }
+  return { reply_markup: { inline_keyboard: keyboard } };
 }
 
 function removeKeyboard() {

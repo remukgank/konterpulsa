@@ -1,6 +1,7 @@
 "use strict";
 
-const { getHTML, request } = require("./konterApi");
+const konterApi = require("./konterApi");
+const { request } = konterApi;
 
 function cleanSaldo(v) {
   return v.replace(/\s*Tambah Saldo.*$/i, "").trim();
@@ -37,7 +38,7 @@ function parseKeyValueTable(html) {
 }
 
 async function getProfil() {
-  const r = await getHTML("/akun/profil");
+  const r = await konterApi.getHTML("/akun/profil");
   const kv = parseKeyValueTable(r.text);
   return {
     status: r.status,
@@ -86,13 +87,13 @@ function parseHistoryTable(html) {
 }
 
 async function getHistory(limit = 5) {
-  const r = await getHTML("/akun/riwayat-transaksi");
+  const r = await konterApi.getHTML("/akun/riwayat-transaksi");
   const rows = parseHistoryTable(r.text);
   return { status: r.status, rows: rows.slice(0, limit) };
 }
 
 async function getHistoryDetail(id) {
-  const r = await getHTML("/akun/riwayat-transaksi/view/" + encodeURIComponent(id));
+  const r = await konterApi.getHTML("/akun/riwayat-transaksi/view/" + encodeURIComponent(id));
   const kv = parseKeyValueTable(r.text);
   return {
     status: r.status,
@@ -116,7 +117,7 @@ async function getHistoryDetail(id) {
 }
 
 async function getPaymentQr(trx) {
-  const view = await getHTML("/akun/riwayat-transaksi/view/" + encodeURIComponent(trx));
+  const view = await konterApi.getHTML("/akun/riwayat-transaksi/view/" + encodeURIComponent(trx));
   const text = view.text || "";
   const inline = text.match(/<img[^>]*\ssrc="data:image\/png;base64,([A-Za-z0-9+/=]+)/);
   if (inline) {
@@ -128,7 +129,7 @@ async function getPaymentQr(trx) {
   const m = text.match(/(\/payment\/[^"'\s]*get_qr\/\d+)/);
   if (!m) return { ok: false, error: "Sesi QR tidak ditemukan." };
   const session = m[1];
-  const qr = await getHTML(m[1]);
+  const qr = await konterApi.getHTML(m[1]);
   const t = qr.text || "";
   if (/^ERROR/.test(t)) return { ok: false, error: t.slice(0, 160), session };
   let buffer = null;
@@ -141,7 +142,7 @@ async function getPaymentQr(trx) {
 }
 
 async function getMutasi(limit = 5) {
-  const r = await getHTML("/akun/riwayat-saldo");
+  const r = await konterApi.getHTML("/akun/riwayat-saldo");
   const text = stripTags(r.text);
   const idx = text.indexOf("Mutasi Saldo ");
   const after = idx === -1 ? text : text.slice(idx);
@@ -167,7 +168,7 @@ async function getMutasi(limit = 5) {
 }
 
 async function getNotifikasi(limit = 10) {
-  const r = await getHTML("/akun/notifikasi");
+  const r = await konterApi.getHTML("/akun/notifikasi");
   const t = r.text || "";
   const items = [];
   const re = /<a\s[^>]*href="[^"]*\/akun\/notifikasi\/read\/(\d+)"[^>]*class="list-group-item"[^>]*>([\s\S]*?)<\/a>/g;
@@ -233,12 +234,12 @@ function parseDepositTable(html) {
 }
 
 async function getDeposit(limit = 10) {
-  const r = await getHTML("/akun/deposit");
+  const r = await konterApi.getHTML("/akun/deposit");
   return { status: r.status, rows: parseDepositTable(r.text).slice(0, limit) };
 }
 
 async function getDepositMethods() {
-  const r = await getHTML("/akun/deposit");
+  const r = await konterApi.getHTML("/akun/deposit");
   const t = r.text || "";
   const csrfM = t.match(/name="csrf_token"\s+value="([^"]*)"/);
   const selM = t.match(/<select[^>]*name="payment"[^>]*>([\s\S]*?)<\/select>/);
@@ -255,7 +256,7 @@ async function getDepositMethods() {
 }
 
 async function getDepositDetail(id) {
-  const r = await getHTML("/akun/deposit/view/" + encodeURIComponent(id));
+  const r = await konterApi.getHTML("/akun/deposit/view/" + encodeURIComponent(id));
   const kv = parseKeyValueTable(r.text);
   return {
     http: r.status,
@@ -268,7 +269,7 @@ async function getDepositDetail(id) {
 }
 
 async function getDepositQr(depId) {
-  const view = await getHTML("/akun/deposit/view/" + encodeURIComponent(depId));
+  const view = await konterApi.getHTML("/akun/deposit/view/" + encodeURIComponent(depId));
   const t = view.text || "";
   const inline = t.match(/<img[^>]*\ssrc="data:image\/png;base64,([A-Za-z0-9+/=]+)/);
   if (inline) {
@@ -281,7 +282,7 @@ async function getDepositQr(depId) {
   const sess = t.match(/get_qr\/(\d+)/);
   if (!full && !sess) return { ok: false, error: "QR belum tersedia untuk deposit ini." };
   const session = full ? full[0] : "/payment/qris_dana/get_qr/" + sess[1];
-  const qr = await getHTML(session);
+  const qr = await konterApi.getHTML(session);
   const qt = qr.text || "";
   if (/^ERROR/.test(qt)) return { ok: false, error: qt.slice(0, 160) };
   let buffer = null;

@@ -7,11 +7,12 @@
 1. Baca `.opencode/skills/audit-workflow/SKILL.md` di awal sesi.
 2. **Proposal fix dulu → tunggu approve** sebelum mengubah kode.
 3. Setelah approve → implement → **`node --check <file>` HARUS clean** setiap file yang diubah.
-4. Jelaskan skenario functional test secara ringkas.
+4. Test lokal: `node --check` + test otomatis di folder **`.tests/`** (JANGAN `/tmp` — akan ke-wipe, tidak bisa dicek ulang). Jelaskan skenario functional test secara ringkas.
 5. Cari potensi bug / error / ketidaksesuaian API.
 6. LOG perubahan (file apa saja, folder mana).
-7. Deploy/restart pm2 — **tanya user dulu**, verifikasi online + log tanpa error.
-8. Commit + push + tag sesuai tingkat perubahan (patch/minor/major).
+7. Deploy/restart — **cek dulu & tanya user** (lihat "Deploy": jangan restart kalau ada proses lain sedang jalan / sedang download / deploy).
+8. Verifikasi bot jalan normal (status online + log tanpa error) → baru lanjut.
+9. Commit + push + tag sesuai tingkat perubahan (patch/minor/major).
 
 ## Sumber kebenaran API
 - **Telegram Bot API**: selalu cek docs resmi terbaru https://core.telegram.org/bots/api (boleh via jina.ai). Jangan asumsi.
@@ -25,9 +26,14 @@
 - Jangan menaruh `KONTER_COOKIE` di `ecosystem.config.js` (ter-track git).
 
 ## Deploy
-- `pm2 start/restart ecosystem.config.js --update-env` dari `/home/runner/workspace`.
-- Env wajib: `TELEGRAM_BOT_TOKEN`, `KONTER_BASE_URL`, `KONTER_COOKIE`, `ALLOWED_CHAT_IDS`.
-- Verifikasi: `pm2 jlist` status online + `pm2 logs konter-bot` tanpa error.
+- **Runtime aktual: Replit workflow "KonterKuota"** → `npm install && node src/index.js` (lihat `.replit`). Bot TIDAK memakai pm2 secara default.
+- pm2 opsional (`pm2 start/restart ecosystem.config.js --update-env`) **hanya kalau memang dipakai** — cek `pm2 list` DULU.
+- **Jangan pernah menjalankan instance kedua**: 2 proses `getUpdates` → Telegram balas `409 Conflict` dan kedua bot saling kill. Sebelum restart: cek `ps aux | grep "node src/index.js"`.
+- Restart = matikan proses lama dengan rapi (SIGTERM → `gracefulShutdown`) lalu nyalakan yang baru; kalau lewat Replit, cukup restart workflow-nya.
+- Antes restart: cek dulu apakah sedang download / npm install / deploy lain berjalan (tunggu selesai) — **tanya user**.
+- Env wajib: `TELEGRAM_BOT_TOKEN`, `KONTER_BASE_URL`, `KONTER_COOKIE`, `ALLOWED_CHAT_IDS` (Replit Secrets; `.env` opsional).
+- Verifikasi setelah start: proses ada (`ps`), log tanpa error 409/Unauthorized, bot merespons (log `[MSG]`/`[CB]`).
+- Urutan wajib: **implement → test → deploy → verifikasi → commit + push + tag**. Jangan commit sebelum deploy terverifikasi.
 
 ## Git
 - Repo aktif: `github.com/remukgank/konterpulsa` (remote `konterpulsa`).
@@ -40,11 +46,12 @@ Label wajib tiap klaim: **[DOCS]** (URL+method), **[SDK/SPEC]** (repo/file/versi
 
 ## Quality gate sebelum lapor
 1. `node --check <file>` HARUS clean tiap file yang diubah.
-2. **Smoke test boot**: `node -e "require('<entry>; console.log('BOOT OK'); process.exit(0)"` (exit sebelum `setImmediate` polling) + require modul non-entry.
-3. Baca ulang diff sendiri: import, nama variabel, await, handler error.
-4. Config/env yang berubah: catat **before → after** di laporan (rollback).
-5. Format laporan per item: Temuan → Fix (file:baris) → Sumber+label+bukti → syntax check → before/after → risiko.
-6. Klaim "sudah fix" tanpa bukti verifikasi = belum selesai.
+2. **Smoke test boot**: `node -e "require('<entry>'); console.log('BOOT OK'); process.exit(0)"` (exit sebelum `setImmediate` polling) + require modul non-entry.
+3. **Test otomatis wajib ada di `.tests/`** (folder ini di-commit, bukan `/tmp`): `npm test` / `node --test .tests/`. Kalau belum ada, buat bersama perubahannya. Cover minimal: parser HTML konter, `roundSell`/`formatRp`, `searchProducts`, helper yang diubah.
+4. Baca ulang diff sendiri: import, nama variabel, await, handler error.
+5. Config/env yang berubah: catat **before → after** di laporan (rollback).
+6. Format laporan per item: Temuan → Fix (file:baris) → Sumber+label+bukti → syntax check → before/after → risiko.
+7. Klaim "sudah fix" tanpa bukti verifikasi = belum selesai.
 
 ## Standar error & anti-spam
 - Semua error API Telegram **429/flood** → tangani `parameters.retry_after` (docs: ResponseParameters.retry_after) dengan retry terbatas & pesan informatif — jangan diam.

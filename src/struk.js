@@ -329,6 +329,7 @@ async function generateStruk(info) {
 
 module.exports = {
   generateStruk,
+  buildSvg,
   roundSell,
   formatRp,
   statusTheme,

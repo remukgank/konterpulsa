@@ -1,0 +1,55 @@
+<!-- Fixture: halaman /order (katalog produk) untuk uji parseCatalog / parseCategories -->
+<!DOCTYPE html>
+<html>
+<head><title>KonterPulsa - Order</title></head>
+<body>
+<script>
+var vouchers = {
+  "op1": [
+    { "id": "v1", "nama": "Pulsa Axis 5 Ribuan", "harga": "5000", "status": 1 },
+    { "id": "v2", "nama": "Pulsa Axis 10 Ribuan", "harga": "10000", "status": 1 },
+    { "id": "v3", "nama": "Paket Axis 1GB", "harga": "15000", "status": 0 }
+  ],
+  "op2": [
+    { "id": "v4", "nama": "Pulsa Telkomsel 5 Ribuan", "harga": "5500", "status": 1 },
+    { "id": "v5", "nama": "Pulsa Telkomsel 20 Ribuan", "harga": "22000", "status": 1 }
+  ]
+};
+var payments = {
+  "qris_dana": { "nama": "QRIS Dana" },
+  "balance": { "nama": "Saldo Akun" }
+};
+var validator = [
+  { "operator": ["op1"], "nama": "Axis XL", "regex": "/^(0812|0813)[0-9]{8,10}$/" }
+];
+</script>
+<select id="produk-select">
+  <option value="pulsa">📱 Pulsa</option>
+  <option value="paket_internet">📦 Paket Internet</option>
+  <option value="game">🎮 Topup Game</option>
+</select>
+<div id="pulsa">
+  <select name="operator">
+    <option value="op1">Axis</option>
+    <option value="op2">Telkomsel</option>
+  </select>
+  <input name="nomor_hp" />
+</div>
+<div id="paket_internet">
+  <select name="operator">
+    <option value="op1">Axis</option>
+  </select>
+  <input name="nomor_hp" />
+</div>
+<div id="game">
+  <input name="id_plgn" />
+</div>
+<div id="aktivasi_voucher">
+  <input name="barcode_voucher" />
+  <input name="nomor_hp" />
+</div>
+<form>
+  <input name="csrf_token" value="csrf-abc123" />
+</form>
+</body>
+</html>

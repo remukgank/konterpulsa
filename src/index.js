@@ -9,10 +9,13 @@ const depLedger = require("./depLedger");
 const { generateStruk, roundSell, formatRp } = require("./struk");
 const { getBuffer, request } = require("./konterApi");
 const { BASE_URL, LOADED_FROM_FILE } = require("./config");
+const util = require("./util");
 const { execFile } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+
+const { fmt, escHtml, escMd, statusIcon, isPendingStatus, tgTimeCell, checkNomorPrefix, formatHargaCompact, voucherBtnLabel } = util;
 
 const bot = initBot();
 
@@ -76,8 +79,7 @@ bot.on("message", (msg) => {
 
 bot.on("callback_query", (q) => {
   const chatId = q.message && q.message.chat && q.message.chat.id;
-  bot.answerCallbackQuery(q.id).catch(() => {});
-  console.log(`[CB]  chat=${chatId} data=${JSON.stringify(q.data)}`);
+  console.log(`[CB] chat=${chatId} data=${JSON.stringify(q.data)}`);
 });
 
 function getState(chatId) {
@@ -199,21 +201,6 @@ async function showBusy(msg, st, label) {
   return reply(msg, text, body).catch(() => {});
 }
 
-function fmt(n) {
-  return (n === "" || n == null) ? "-" : n;
-}
-
-function escHtml(s) {
-  return String(s == null ? "" : s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-function escMd(s) {
-  return String(s == null ? "" : s).replace(/([_*`[\]])/g, "\\$1");
-}
-
 function orderCatLabel(st, key) {
   const c = (st.cfg.categories || []).find((x) => x.key === key);
   return (c && c.label ? c.label.trim() : key) || String(key || "");
@@ -311,11 +298,17 @@ async function qrisTick(chatId, entry) {
       }
     }
   } catch (e) {
-    // lanjut coba berikutnya
+    console.log("[QRIS] poll #" + entry.trx + " error (coba " + entry.tries + "/25): " + (e && e.message));
   }
   if (entry.tries < 25) {
     entry.timer = setTimeout(qrisTick, 30000, chatId, entry);
   } else {
+    console.log("[QRIS] polling trx #" + entry.trx + " dihentikan (maks 25×30s ~12.5 menit), status terakhir: " + entry.last || "-");
+    await reply(
+      { chat: { id: chatId } },
+      "⏳ *Polling QRIS dihentikan*\nTrx *#" + entry.trx + "* — status terakhir: *" + (entry.last || "-") + "*\nCek kembali via /riwayat atau tekan *Konfirmasi Pembayaran*.",
+      { parse_mode: "Markdown" }
+    ).catch(() => {});
     delete QRIS_POLLS[chatId];
   }
 }
@@ -512,13 +505,13 @@ async function handleCari(msg, q) {
   try {
     const cat = await loadCatalog();
     const res = searchProducts(cat, q);
-    if (!res.length) return spin.fail("Tidak ada produk cocok dengan *" + q + "*", { parse_mode: "Markdown" });
+    if (!res.length) return spin.fail("Tidak ada produk cocok dengan " + util.mdEmphasize(q), { parse_mode: "Markdown" });
 
     const lines = res.slice(0, 12).map((p) => {
       const status = p.status === 0 ? " *(Kosong)*" : "";
       return `• ${p.operatorName} — ${p.nama}: ${formatHarga(p.harga)}${status}`;
     });
-    let out = `Ditemukan ${res.length} produk untuk *"${q}"*:\n\n` + lines.join("\n");
+    let out = `Ditemukan ${res.length} produk untuk ${util.mdEmphasize(q)}:\n\n` + lines.join("\n");
     if (res.length > 12) out += `\n... dan ${res.length - 12} lainnya.`;
 
     const rows = [];
@@ -584,35 +577,29 @@ bot.onText(/^\/(saldo|profil)$/, guard(doSaldo));
 
 /* ==================== /riwayat & /mutasi (login) ==================== */
 
-function isPendingStatus(e) {
-  const st = ((e.statusPembayaran || "") + " " + (e.statusPengisian || "") + " " + (e.status || "")).toLowerCase();
-  return /tunggu|pending|menunggu|proses|belum/i.test(st);
-}
-
-function statusIcon(st) {
-  const s = String(st || "");
-  if (/tunggu|pending|menunggu|proses|belum/i.test(s)) return "⏳";
-  if (/sukses|lunas|berhasil|success/i.test(s)) return "✅";
-  if (/gagal|ditolak|batal|expire|failed/i.test(s)) return "❌";
-  return "▫️";
-}
-
-function renderRiwayat(msg, adm, list, spin) {
-  const slice = list.slice(0, 10);
+function renderRiwayat(msg, adm, list, spin, page, total, offset) {
+  const slice = list;
   if (!slice.length) {
     const opts = inlineButtons([[{ text: "⬅️ Menu", data: "menu" }]]);
     return spin ? spin.fail("Belum ada transaksi.", opts) : reply(msg, "Belum ada transaksi.", opts);
   }
+  const p = Math.max(0, Number(page) || 0);
+  const off = Math.max(0, Number(offset) || p * slice.length);
+  const tot = total != null ? Number(total) : slice.length;
   const btns = [];
   for (let i = 0; i < slice.length; i++) {
     const e = slice[i];
     if (!e.trx) continue;
     const row = [];
     if (isPendingStatus(e)) row.push({ text: "🖼️ Kirim QR #" + e.trx, data: "qr:" + e.trx });
-    const label = (i + 1) + " — " + (e.voucher || "Produk");
+    const label = (off + i + 1) + " — " + (e.voucher || "Produk");
     row.push({ text: label, data: "hist:" + e.trx });
     btns.push(row);
   }
+  const nav = [];
+  if (p > 0) nav.push({ text: "⬅️ Sebelumnya", data: "riw:p:" + (p - 1) });
+  if (tot > off + slice.length) nav.push({ text: "Selanjutnya ➡️", data: "riw:p:" + (p + 1) });
+  if (nav.length) btns.push(nav);
   btns.push([{ text: "⬅️ Menu Utama", data: "menu" }]);
   const head = adm ? "🗂 *Riwayat Transaksi (Semua User)*" : "🗂 *Riwayat Transaksi*";
   const lines = slice.map((e) => {
@@ -643,12 +630,16 @@ function renderRiwayat(msg, adm, list, spin) {
   });
 }
 
-async function doRiwayat(msg) {
+async function doRiwayat(msg, m) {
   const chatId = msg.chat.id;
   chatAction(chatId);
   const adm = isAllowed(chatId);
+  const limit = util.clampInt(m && m[1], 1, 25, 10);
   if (!adm) {
-    return renderRiwayat(msg, adm, ledger.listByChat(chatId, 10));
+    const st = getState(chatId);
+    st.riwayatPage = 0;
+    const list = ledger.listByChat(chatId, limit);
+    return renderRiwayat(msg, adm, list, null, 0, list.length, 0);
   }
   const spin = await startStream(chatId, "Mengambil riwayat transaksi...");
   // admin: gabung ledger + transaksi akun (web), dedup per id transaksi
@@ -656,7 +647,7 @@ async function doRiwayat(msg) {
   const byTrx = new Map(led.map((e) => [String(e.trx), e]));
   let web = [];
   try {
-    const h = await akun.getHistory(50);
+    const h = await akun.getHistory(100);
     web = (h.rows || []).map((r) => {
       const L = byTrx.get(String(r.id));
       return {
@@ -676,7 +667,13 @@ async function doRiwayat(msg) {
   }
   const seen = new Set(web.map((e) => String(e.trx)));
   const extra = led.filter((e) => !seen.has(String(e.trx)));
-  return renderRiwayat(msg, adm, web.concat(extra).sort((a, b) => String(b.trx).localeCompare(String(a.trx))), spin);
+  const all = web.concat(extra).sort((a, b) => String(b.trx).localeCompare(String(a.trx)));
+  const st = getState(chatId);
+  const p = Math.max(0, Number(st.riwayatPage) || 0);
+  const from = p * limit;
+  const pageList = all.slice(from, from + limit);
+  st.riwayatPage = p;
+  return renderRiwayat(msg, adm, pageList, spin, p, all.length, from);
 }
 bot.onText(/^\/riwayat(?:\s+(\d+))?$/, doRiwayat);
 
@@ -719,17 +716,8 @@ async function doNotifikasi(msg) {
     const { status, items } = await akun.getNotifikasi(10);
     if (status !== 200) return spin.fail("Gagal (status " + status + "). Cek sesi login.");
     if (!items.length) return spin.fail("Belum ada notifikasi.");
-    const parts = items.map((n, i) => {
-      const icon = n.unread ? "🔵" : "▫️";
-      return (
-        (i + 1) + ". " + icon + " <b>" + escHtml(n.judul) + "</b>\n" +
-        "📅 " + escHtml(n.waktu) + "\n" +
-        "<blockquote>" + escHtml(n.teks.slice(0, 400)) + "</blockquote>"
-      );
-    });
-    let text = "🔔 <b>Notifikasi Terbaru</b>\n\n" + parts.join("\n\n");
-    if (text.length > 4000) text = text.slice(0, 4000);
-    return spin.finish(text, { parse_mode: "HTML" });
+    const rendered = util.notifBlocksHtml(items, { maxItems: 6, maxText: 400, head: "🔔 <b>Notifikasi Terbaru</b>" });
+    return spin.finish(rendered.html, { parse_mode: "HTML" });
   } catch (e) {
     return spin.fail("Gagal mengambil notifikasi: " + e.message);
   }
@@ -1179,7 +1167,14 @@ async function handleKonfirm(chatId, msg, trx) {
         { parse_mode: "Markdown" }
       ).catch(() => {});
     }
-    if (QRIS_POLLS[chatId]) {
+    // Bersihkan polling QRIS milik pemilik transaksi (target), bukan cuma chat yang menekan tombol.
+    const targetPoll = QRIS_POLLS[target];
+    if (targetPoll) {
+      clearTimeout(targetPoll.timer);
+      delete QRIS_POLLS[target];
+      console.log("[QRIS] polling trx #" + id + " dihentikan oleh konfirmasi (chat " + target + ")");
+    }
+    if (target !== chatId && QRIS_POLLS[chatId]) {
       clearTimeout(QRIS_POLLS[chatId].timer);
       delete QRIS_POLLS[chatId];
     }
@@ -1270,6 +1265,11 @@ bot.on("callback_query", (q) => {
     if (data === "dep:new") return startDeposit(chatId, q.message, st);
     if (data.startsWith("dep:pay:")) return handleDepPay(chatId, q.message, st, data.slice(8));
     if (data.startsWith("ord:")) return handleDirect(chatId, q.message, st, data.slice(4));
+    if (data.startsWith("riw:p:")) {
+      const page = parseInt(data.slice(6), 10) || 0;
+      st.riwayatPage = page;
+      return doRiwayat(q.message);
+    }
     if (data.startsWith("hist:")) return handleHistoryDetail(chatId, q.message, data.slice(5));
     if (data.startsWith("struk:")) return handleStruk(chatId, q.message, data.slice(6));
     if (data.startsWith("qr:")) return handleQrPick(chatId, q.message, data.slice(3));
@@ -1364,45 +1364,12 @@ async function handleBackOperator(chatId, msg, st) {
 
 const VOUCHER_PAGE = 20;
 
-function formatHargaCompact(h) {
-  const n = parseInt(h, 10);
-  return isNaN(n) ? "-" : n.toLocaleString("id-ID");
-}
-
-function voucherBtnLabel(v) {
-  const price = formatHargaCompact(v.harga);
-  const kosong = v.status === 0 ? " (Kosong)" : "";
-  const suffix = " · " + price + kosong;
-  let name = v.nama || "Paket";
-  let label = name + suffix;
-  if (label.length > 64) {
-    const budget = Math.max(64 - suffix.length - 1, 8);
-    name = name.slice(0, budget).replace(/\s+$/, "");
-    label = name + "…" + suffix;
-  }
-  if (label.length > 64) label = label.slice(0, 63) + "…";
-  return label;
-}
-
 function validatorForOp(st, opId) {
   const vals = (st.cfg && st.cfg.validators) || [];
   for (const v of vals) {
     if ((v.operator || []).some((x) => String(x) === String(opId))) return v;
   }
   return null;
-}
-
-function checkNomorPrefix(vEntry, nomor) {
-  if (!vEntry || !vEntry.regex) return true;
-  try {
-    const m = String(vEntry.regex).match(/^\/(.*)\/([gimsuy]*)$/);
-    const re = m ? new RegExp(m[1], m[2]) : new RegExp(String(vEntry.regex));
-    if (re.test(nomor)) return true;
-    const pref = (String(vEntry.regex).match(/\d{3,4}/g) || []).slice(0, 5);
-    return { examples: pref.join(" / ") || "08xx" };
-  } catch (e) {
-    return true;
-  }
 }
 
 function renderVouchers(msg, st, notice) {
@@ -1539,7 +1506,16 @@ async function doSubmit(chatId, msg, st) {
   const payName = (st.cfg.payments[o.pembayaran] && st.cfg.payments[o.pembayaran].nama) || o.pembayaran;
   const spin = await startStream(chatId, "Memproses order...");
   // ambil csrf token segar dari home agar cocok dengan cookie
-  const fresh = await order.getOrderConfig();
+  let fresh;
+  try {
+    fresh = await order.getOrderConfig();
+  } catch (e) {
+    await bot.deleteMessage(chatId, canvas).catch(() => {});
+    return spin.fail(
+      "❌ *Gagal memuat konfigurasi order.*\nServer konter tidak merespons atau sesi login Anda kadaluarsa.\n\nCoba lagi dengan /order.",
+      { parse_mode: "Markdown" }
+    );
+  }
   const csrf = fresh.csrfToken || st.cfg.csrfToken;
   const submit = await order.submitOrder({
     kategori: o.kategori,
@@ -1727,16 +1703,6 @@ async function handleStruk(chatId, msg, id) {
 
 /* ==================== message capture (reply keyboard, nomor & captcha) ==================== */
 
-// <tg-time> tag resmi Bot API (HTML format) — isi tag = fallback teks utk client lama.
-// Kalau tanggal tidak bisa diparse → kembalikan teks biasa (defensif).
-function tgTimeCell(dateStr) {
-  const raw = String(dateStr || "").trim();
-  if (!raw) return null;
-  const t = Date.parse(raw.replace(" ", "T"));
-  if (isNaN(t)) return raw;
-  return `<tg-time unix="${Math.floor(t / 1000)}">${escHtml(raw)}</tg-time>`;
-}
-
 function startCari(msg) {
   const st = getState(msg.chat.id);
   st.cariWait = true;
@@ -1785,7 +1751,13 @@ bot.on("message", async (msg) => {
       delete st.cariWait;
       return reply(msg, "Pencarian dibatalkan.");
     }
-    return;
+    const hint = util.suggestCommand(text, BOT_COMMANDS);
+    return reply(
+      msg,
+      "❓ Perintah tidak dikenal" + (hint ? ". Maksud Anda: /" + hint + "?" : "") +
+      "\nKetik /help untuk daftar lengkap perintah.",
+      { parse_mode: "Markdown", reply_markup: { remove_keyboard: true } }
+    );
   }
 
   if (st && st.cariWait) {
@@ -1915,4 +1887,8 @@ if (!process.env.TELEGRAM_BOT_TOKEN && !require("./config").BOT_TOKEN) {
 }
 if (!require("./config").BASE_URL) {
   console.error("WARNING: KONTER_BASE_URL belum diisi (isi di .env / secrets).");
+}
+const cfgCheck = require("./config");
+if (!cfgCheck.ALLOWED_CHAT_IDS || cfgCheck.ALLOWED_CHAT_IDS.length === 0) {
+  console.warn("WARNING: ALLOWED_CHAT_IDS kosong — /saldo, /mutasi, /notifikasi DIBUKA untuk semua chat (TIDAK disarankan).");
 }

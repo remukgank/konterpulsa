@@ -17,10 +17,16 @@
 | `/menu` | Tampilkan menu utama (inline) | Tidak |
 | `/harga <kata>` atau `/cari <kata>` | Cari produk & harga; tiap hasil bisa langsung order | Tidak |
 | `/saldo` | Cek saldo & info akun *(khusus admin)* | Ya (admin) |
-| `/riwayat [n]` | Riwayat transaksi (default 5, maks 15) + tombol detail | Ya (login) |
+| `/riwayat [n]` | Riwayat transaksi (default 10, maks 25) + tombol detail & paginasi | Ya (login) |
 | `/mutasi [n]` | Mutasi saldo *(khusus admin)* | Ya (admin) |
+| `/notifikasi` | Notifikasi order terbaru *(khusus admin)* | Ya (admin) |
+| `/deposit` | Riwayat & buat deposit / top-up saldo *(khusus admin)* | Ya (admin) |
 | `/order` | Mulai transaksi interaktif | Ya (login) |
+| `/kirimqr <id>` | Kirim ulang QR pembayaran transaksi *(khusus admin)* | Ya (admin) |
 | `/batal` | Batalkan proses order yang berjalan | Ya |
+
+Ketik perintah yang salah? Bot akan menyarankan perintah yang paling mirip
+(contoh: `/starrt` → `/start`).
 
 ## Menu & tombol
 
@@ -29,6 +35,12 @@
   Tekan salah satu untuk jalan pintas.
 - **Menu utama inline** (`/menu` atau tombol `⬅️ Menu Utama`):
   Cari Harga, Saldo Saya, Riwayat, Mutasi, Order, Bantuan.
+
+- **Tombol per-transaksi** (di riwayat & detail):
+  `🖼️ Kirim QR #<id>` — kirim QR pembayaran QRIS ke chat (dan ke pengguna target jika admin kirim behalf).
+  `🖨️ Cetak Struk` — kirim gambar struk pembayaran untuk dikirim ke pelanggan.
+  `✅ Konfirmasi Pembayaran` — paksa cek status pembayaran QRIS.
+  Riwayat yang panjang dilengkapi tombol `⬅️ Sebelumnya` / `Selanjutnya ➡️` (paginasi).
 
 ## Contoh `/harga`
 

@@ -1,0 +1,24 @@
+<!-- Fixture: halaman /akun/deposit (metode pembayaran + csrf + riwayat deposit) -->
+<input name="csrf_token" value="csrf-dep-xyz" />
+<select name="payment">
+  <option value="">-- Pilih --</option>
+  <option value="qris_dana">QRIS Dana</option>
+  <option value="qris_ovo">QRIS OVO</option>
+  <option value="https://example.com">External (skip)</option>
+</select>
+<table>
+  <tr>
+    <td><a href="/akun/deposit/view/5001">#5001</a></td>
+    <td>16/10/2026 08:00</td>
+    <td>Rp 50.000</td>
+    <td>QRIS Dana</td>
+    <td>Sukses</td>
+  </tr>
+  <tr>
+    <td><a href="/akun/deposit/view/5002">#5002</a></td>
+    <td>15/10/2026 08:00</td>
+    <td>Rp 100.000</td>
+    <td>QRIS OVO</td>
+    <td>Pending</td>
+  </tr>
+</table>
