@@ -959,7 +959,7 @@ async function handleSubmenu(chatId, msg, st, menuKey) {
   if (!entry) return reply(msg, "Menu tidak ditemukan.");
   const items = submenuItems(cfg, entry);
   if (!items.length) return reply(msg, "Tidak ada submenu tersedia.");
-  const rows = chunk(items.map((it) => [{ text: it.label, data: "cat:" + it.key }]), 2);
+  const rows = chunk(items.map((it) => ({ text: it.label, data: "cat:" + it.key })), 2);
   rows.push([{ text: "⬅️ Menu Order", data: "back:kategori" }]);
   return flowEdit(msg, st, `${entry.label}\nPilih *sub-menu* (${items.length}):`, rows);
 }
