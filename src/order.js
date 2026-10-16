@@ -74,6 +74,14 @@ function findCategoryForOperator(cfg, opId) {
   return cfg.categories.find((c) => c.operators && c.operators[opId]) || null;
 }
 
+function isPhoneValidationError(errors) {
+  const message = (Array.isArray(errors) ? errors : [errors])
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return /\b(?:nomor\s*(?:hp|handphone|telepon|tujuan)|nomor\s+tidak\s+(?:benar|valid|sesuai)|phone\s+number)\b/.test(message);
+}
+
 async function submitOrder({ kategori, operator, voucher, values, pembayaran, captcha, csrfToken }) {
   const endpoint = BASE_URL + "/" + kategori;
 
@@ -113,5 +121,6 @@ module.exports = {
   getOrderConfig,
   categoryByKey,
   findCategoryForOperator,
+  isPhoneValidationError,
   submitOrder,
 };

@@ -998,9 +998,9 @@ function renderBrands(msg, st) {
   if (!cat) return reply(msg, "Kategori tidak ditemukan.");
   const groups = st.opGroups || brandGroupsFor(cat);
   st.opGroups = groups;
-  const rows = Object.keys(groups).map((b) => [{ text: brandIcon(b) + " " + b + " (" + groups[b].length + ")", data: "brand:" + b }]);
+  const rows = Object.keys(groups).map((b) => ({ text: brandIcon(b) + " " + b + " (" + groups[b].length + ")", data: "brand:" + b }));
   rows.push([{ text: "⬅️ Kategori", data: "back:kategori" }]);
-  return flowEdit(msg, st, `Kategori *${cat.label.trim()}*\nPilih *merek*:`, rows);
+  return flowEdit(msg, st, `Kategori *${cat.label.trim()}*\nPilih *merek*:`, chunk(rows, 2));
 }
 
 function renderProviderList(msg, st, opIds, backTo, notice) {
@@ -1610,6 +1610,19 @@ async function doSubmit(chatId, msg, st) {
       );
       await sendCaptcha(chatId);
       return;
+    }
+    if (
+      o.field === "nomor_hp" &&
+      o.values &&
+      o.values.nomor_hp &&
+      order.isPhoneValidationError(errs)
+    ) {
+      delete o.values.nomor_hp;
+      st.step = "nomor";
+      return spin.fail(
+        "⚠️ *Nomor tujuan ditolak oleh situs.*\nPeriksa nomor yang dimasukkan dan pastikan nomornya sesuai dengan provider/paket yang dipilih. Ketik ulang nomor tujuan (contoh: `081234567890`). Pilihan paket Anda tetap tersimpan.",
+        { parse_mode: "Markdown" }
+      );
     }
     out = "❌ *Order gagal:*\n" + errs.map((e) => "• " + e).join("\n") + "\n\nSilakan coba lagi /order.";
     clearState(chatId);
