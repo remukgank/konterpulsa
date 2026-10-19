@@ -32,6 +32,7 @@
 - Restart = matikan proses lama dengan rapi (SIGTERM → `gracefulShutdown`) lalu nyalakan yang baru; kalau lewat Replit, cukup restart workflow-nya.
 - Antes restart: cek dulu apakah sedang download / npm install / deploy lain berjalan (tunggu selesai) — **tanya user**.
 - Env wajib: `TELEGRAM_BOT_TOKEN`, `KONTER_BASE_URL`, `KONTER_COOKIE`, `ALLOWED_CHAT_IDS` (Replit Secrets; `.env` opsional).
+- Opsional: `KONTER_PASSWORD` — kata sandi login web konter; dipakai bot untuk verifikasi kata sandi otomatis bila server memintanya saat order.
 - Verifikasi setelah start: proses ada (`ps`), log tanpa error 409/Unauthorized, bot merespons (log `[MSG]`/`[CB]`).
 - Urutan wajib: **implement → test → deploy → verifikasi → commit + push + tag**. Jangan commit sebelum deploy terverifikasi.
 

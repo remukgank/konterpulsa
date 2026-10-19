@@ -15,6 +15,7 @@ if (!process.env.TELEGRAM_BOT_TOKEN || !process.env.KONTER_BASE_URL) {
 const BASE_URL = (process.env.KONTER_BASE_URL || "").replace(/\/+$/, "");
 const COOKIE = process.env.KONTER_COOKIE || "";
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
+const PASSWORD = process.env.KONTER_PASSWORD || "";
 
 function getAllowedChatIds() {
   const raw = process.env.ALLOWED_CHAT_IDS || "";
@@ -30,5 +31,6 @@ module.exports = {
   BASE_URL,
   COOKIE,
   BOT_TOKEN,
+  PASSWORD,
   ALLOWED_CHAT_IDS: getAllowedChatIds(),
 };

@@ -2,7 +2,7 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { generateStruk, buildSvg, roundSell, formatRp, statusTheme } = require("../src/struk");
+const { generateStruk, buildSvg, roundSell, formatRp, statusTheme, estTextWidth, fitSmartLines } = require("../src/struk");
 
 test("struk: roundSell psychological pricing", () => {
   // base=5000 -> minimum=6000 -> start=0 -> candidates 0,2k,5k,7k,10k... smallest >=6000 is 7000
@@ -51,4 +51,46 @@ test("struk: buildSvg returns SVG string with escaped values", () => {
   });
   assert.ok(!sxss.includes("<script>"));
   assert.ok(sxss.includes("&lt;script&gt;"));
+});
+
+test("struk: SN/Ref & Token panjang tampil penuh tanpa elipsis", () => {
+  const sn = "1116-5582-3664-4430-2835-4927-3310";
+  const token = "1234567890123456789012345678901";
+  const svg = buildSvg({
+    trx: "5344150", tanggal: "17/10/2026 05:12", produk: "PLN Prabayar — 50.000",
+    provider: "Token PLN", nomor: "081252615009", idPelanggan: "86007117103", pelanggan: "-",
+    metode: "QRIS", harga: "Rp 55.000", snRef: sn, token, status: "sukses",
+  });
+  assert.ok(svg.includes(sn), "SN utuh harus tampil penuh");
+  assert.ok(svg.includes(token), "Token utuh harus tampil penuh");
+  assert.ok(!svg.includes("…"), "tidak boleh ada elipsis pemotong");
+});
+
+test("struk: SN sangat panjang wrap 2 baris, tetap tanpa elipsis", () => {
+  const sn = "1116-5582-3664-4430-2835-4927-3310-9988-7766-5544-3322";
+  const svg = buildSvg({
+    trx: "1", tanggal: "", produk: "PLN Prabayar — 100.000.000", provider: "Token PLN",
+    nomor: "081234567890", idPelanggan: "", pelanggan: "", metode: "QRIS",
+    harga: "Rp 100.000.000", snRef: sn, token: "", status: "sukses",
+  });
+  const first = "1116-5582-3664-4430-2835-4927-";
+  const second = "3310-9988-7766-5544-3322";
+  assert.ok(svg.includes(first), "baris 1 SN harus tampil");
+  assert.ok(svg.includes(second), "baris 2 SN harus tampil");
+  assert.ok(!svg.includes("…"));
+  // baris total: label di atas nilai (stacked), tidak berdampingan
+  assert.ok(svg.includes(">Total Pembayaran</text>"));
+  // nama item panjang + harga besar: font item menyusut supaya tidak menabrak kolom Harga
+  assert.ok(/font-size="(?:9|10|11)"/.test(svg), "font item harus menyusut pada kasus panjang");
+});
+
+test("struk: estTextWidth & fitSmartLines", () => {
+  const w = estTextWidth("1234567890", 11, false);
+  assert.ok(w > 50 && w < 90, "estimasi lebar wajar: " + w);
+  const short = fitSmartLines("ABC-123", 200, 11);
+  assert.strictEqual(short.length, 1);
+  assert.strictEqual(short[0].size, 11);
+  const long = fitSmartLines("a".repeat(200), 200, 11);
+  assert.ok(long.length >= 2, "teks sangat panjang harus wrap");
+  assert.ok(long.every((l) => l.size >= 8), "ukuran font minimal 8");
 });

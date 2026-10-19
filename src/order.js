@@ -63,6 +63,7 @@ async function getOrderConfig() {
     payments: catalog.payments,
     validators,
     csrfToken: extractCsrfFromHtml(r.text),
+    passwordVerifyNeeded: parsePasswordVerifyNeeded(r.text),
   };
 }
 
@@ -80,6 +81,54 @@ function isPhoneValidationError(errors) {
     .join(" ")
     .toLowerCase();
   return /\b(?:nomor\s*(?:hp|handphone|telepon|tujuan)|nomor\s+tidak\s+(?:benar|valid|sesuai)|phone\s+number)\b/.test(message);
+}
+
+/**
+ * Deteksi error server yang artinya sesi web belum diverifikasi kata sandi.
+ * Pesan asli: "Silakan verifikasi passsword terlebih dahulu." [OBSERVED].
+ */
+function needsPasswordVerify(errors) {
+  const message = (Array.isArray(errors) ? errors : [errors])
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return /verifikasi\s*(?:pass+word|kata\s*sandi)/.test(message);
+}
+
+/**
+ * Ekstrak status verifikasi kata sandi sesi dari halaman order web:
+ * <span id="password_verify">1|0</span> — "1" = perlu verifikasi, "0" = sudah.
+ * Return true/false, atau null bila elemen tidak ditemukan (schema berubah).
+ * [OBSERVED: GET /order & /beli (17-10-2026) -> "1" untuk sesi bot].
+ */
+function parsePasswordVerifyNeeded(html) {
+  const m = String(html || "").match(/id="password_verify"[^>]*>\s*([01])\s*</);
+  if (!m) return null;
+  return m[1] === "1";
+}
+
+/**
+ * Verifikasi kata sandi akun web untuk sesi cookie saat ini.
+ * Endpoint diambil dari JS form order asli web:
+ *   GET /beli/password_verify?password=<password>
+ * Response JSON {"success":true|false,...} [OBSERVED: password salah ->
+ * 200 {"success":false,"message":"Password salah"}].
+ */
+async function passwordVerify(password) {
+  const r = await request("GET", "/beli/password_verify?password=" + encodeURIComponent(String(password || "")));
+  let text = "";
+  try {
+    text = await r.text();
+  } catch (e) {
+    text = "";
+  }
+  let json = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch (e) {
+    json = null;
+  }
+  return { status: r.status, json, text };
 }
 
 async function submitOrder({ kategori, operator, voucher, values, pembayaran, captcha, csrfToken }) {
@@ -122,5 +171,8 @@ module.exports = {
   categoryByKey,
   findCategoryForOperator,
   isPhoneValidationError,
+  needsPasswordVerify,
+  parsePasswordVerifyNeeded,
+  passwordVerify,
   submitOrder,
 };

@@ -90,6 +90,29 @@ function statusTheme(status) {
   return STATUS_THEMES.pending;
 }
 
+/* Perkiraan lebar teks DejaVu Sans (tanpa akses font metrics). */
+function estTextWidth(text, fontSize, bold = false) {
+  const perChar = bold ? 0.64 : 0.6;
+  return String(text == null ? "" : text).length * fontSize * perChar;
+}
+
+/* Tampilkan teks penuh: turunkan ukuran font dulu, baru wrap bila perlu. */
+function fitSmartLines(text, maxWidth, maxSize = 11, minSize = 8) {
+  const t = String(text == null ? "" : text);
+  for (let size = maxSize; size >= minSize; size--) {
+    if (estTextWidth(t, size, false) <= maxWidth) return [{ text: t, size }];
+  }
+  const cap = Math.max(1, Math.floor(maxWidth / (minSize * 0.64)));
+  const parts = t.split("-");
+  const mid = Math.ceil(parts.length / 2);
+  let first = parts.slice(0, mid).join("-");
+  let second = parts.slice(mid).join("-");
+  if (parts.length > 1) first += "-";
+  if (first.length > cap) first = first.slice(0, cap);
+  if (second.length > cap) second = second.slice(0, cap);
+  return [{ text: first, size: minSize }, { text: second, size: minSize }];
+}
+
 function truncate(value, maxLength) {
   const text = String(value == null ? "" : value);
   return text.length > maxLength
@@ -99,8 +122,9 @@ function truncate(value, maxLength) {
 
 function buildSvg(info = {}) {
   const theme = statusTheme(info.status);
+  const priceRaw = String(info.harga || "-");
   const price = escXml(info.harga || "-");
-  const product = escXml(truncate(info.produk || "-", 34));
+  const productRaw = truncate(info.produk || "-", 34);
   const provider = escXml(truncate(info.provider || "", 26));
   const customer = escXml(cleanText(info.pelanggan || "-", 100));
   const phone = escXml(cleanText(info.nomor || "-", 40));
@@ -108,8 +132,8 @@ function buildSvg(info = {}) {
   const method = escXml(cleanText(info.metode || "-", 60));
   const date = escXml(cleanText(info.tanggal || "-", 60));
   const transactionId = escXml("#" + cleanText(info.trx || "-", 60));
-  const reference = escXml(truncate(cleanText(info.snRef || "", 100), 22));
-  const token = escXml(truncate(cleanText(info.token || "", 100), 22));
+  const snRaw = cleanText(info.snRef || "", 100);
+  const tokenRaw = cleanText(info.token || "", 100);
 
   const font = 'font-family="DejaVu Sans, sans-serif"';
 
@@ -180,7 +204,13 @@ function buildSvg(info = {}) {
   y += 52;
   body.push(`<rect x="32" y="${y - 28}" width="576" height="56" fill="#F8FAFC"/>`);
   body.push(`<text x="52" y="${y + 1}" ${font} font-size="12" fill="#64748B">1</text>`);
-  body.push(value(92, y - 2, product, 12));
+  // nama item jangan menabrak teks Harga (rata-kanan di x=370, menembus ke kiri):
+  // batas kanan item = awal teks harga, sisakan jarak 8px
+  const priceStart = 370 - estTextWidth(priceRaw, 12, false) - 10;
+  const itemAvail = Math.max(60, priceStart - 92 - 8);
+  let itemSize = 12;
+  while (itemSize > 9 && estTextWidth(productRaw, itemSize, true) > itemAvail) itemSize--;
+  body.push(value(92, y - 2, escXml(productRaw), itemSize));
 
   if (provider) {
     body.push(`<text x="92" y="${y + 14}" ${font} font-size="10" fill="#94A3B8">${provider}</text>`);
@@ -192,16 +222,26 @@ function buildSvg(info = {}) {
 
   y += 48;
 
-  if (info.snRef) {
-    body.push(label(352, y, "SN / Ref"));
-    body.push(`<text x="592" y="${y}" ${font} font-size="11" fill="#334155" text-anchor="end">${reference}</text>`);
-    y += 22;
+  const detailX = 352;
+  const detailRight = 592;
+  const detailMaxW = detailRight - detailX - estTextWidth("SN / Ref", 11, false) - 14;
+
+  if (snRaw) {
+    const lines = fitSmartLines(snRaw, detailMaxW, 11);
+    body.push(label(detailX, y, "SN / Ref"));
+    lines.forEach((ln, i) => {
+      body.push(`<text x="${detailRight}" y="${y + i * 13}" ${font} font-size="${ln.size}" fill="#334155" text-anchor="end">${escXml(ln.text)}</text>`);
+    });
+    y += 22 + (lines.length - 1) * 13;
   }
 
-  if (info.token) {
-    body.push(label(352, y, "Token"));
-    body.push(`<text x="592" y="${y}" ${font} font-size="11" fill="#334155" text-anchor="end">${token}</text>`);
-    y += 22;
+  if (tokenRaw) {
+    const lines = fitSmartLines(tokenRaw, detailMaxW, 11);
+    body.push(label(detailX, y, "Token"));
+    lines.forEach((ln, i) => {
+      body.push(`<text x="${detailRight}" y="${y + i * 13}" ${font} font-size="${ln.size}" fill="#334155" text-anchor="end">${escXml(ln.text)}</text>`);
+    });
+    y += 22 + (lines.length - 1) * 13;
   }
 
   y += 8;
@@ -215,8 +255,10 @@ function buildSvg(info = {}) {
   y += 16;
   body.push(`<line x1="352" y1="${y}" x2="592" y2="${y}" stroke="#CBD5E1" stroke-width="1"/>`);
 
-  y += 30;
-  body.push(value(352, y, "Total Pembayaran", 13));
+  y += 32;
+  body.push(
+    `<text x="592" y="${y - 18}" ${font} font-size="11" fill="#94A3B8" text-anchor="end">Total Pembayaran</text>`
+  );
   body.push(
     `<text x="592" y="${y + 4}" ${font} font-size="20" fill="#0F172A" font-weight="bold" text-anchor="end">${price}</text>`
   );
@@ -333,4 +375,6 @@ module.exports = {
   roundSell,
   formatRp,
   statusTheme,
+  estTextWidth,
+  fitSmartLines,
 };

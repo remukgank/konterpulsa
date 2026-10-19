@@ -40,6 +40,11 @@ function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/* Sembunyikan nilai rahasia (mis. password verifikasi) dari log. */
+function redactUrl(u) {
+  return String(u == null ? "" : u).replace(/([?&](?:password|user_password)=)[^&]*/gi, "$1***");
+}
+
 async function request(method, urlPath, { body, form } = {}) {
   const url = /^https?:\/\//.test(urlPath) ? urlPath : BASE_URL + urlPath;
   const headers = {
@@ -72,7 +77,7 @@ async function request(method, urlPath, { body, form } = {}) {
     if (!TRANSIENT.includes(res.status) || attempt === 1) break;
     const ra = parseInt(res.headers.get("retry-after") || "1", 10);
     const wait = Math.min(isNaN(ra) || ra < 1 ? 1 : ra, 3);
-    console.log("[HTTP] " + method + " " + urlPath + " status " + res.status + " — retry setelah " + wait + "s");
+    console.log("[HTTP] " + method + " " + redactUrl(urlPath) + " status " + res.status + " — retry setelah " + wait + "s");
     await new Promise((r) => setTimeout(r, wait * 1000));
   }
   return res;
@@ -100,4 +105,4 @@ async function getHTML(urlPath) {
   return { status: r.status, headers: r.headers, text };
 }
 
-module.exports = { request, getHTML, getBuffer, cookieJar: () => cookieJar };
+module.exports = { request, getHTML, getBuffer, redactUrl, cookieJar: () => cookieJar };

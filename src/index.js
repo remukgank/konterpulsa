@@ -8,7 +8,7 @@ const ledger = require("./ledger");
 const depLedger = require("./depLedger");
 const { generateStruk, roundSell, formatRp } = require("./struk");
 const { getBuffer, request } = require("./konterApi");
-const { BASE_URL, LOADED_FROM_FILE } = require("./config");
+const { BASE_URL, LOADED_FROM_FILE, PASSWORD } = require("./config");
 const util = require("./util");
 const { execFile } = require("child_process");
 const fs = require("fs");
@@ -910,12 +910,18 @@ const ORDER_MENU = [
   { key: "paket_internet", label: "📦 Paket Internet" },
   { key: "game", label: "🎮 Topup Game" },
   {
+    // Opsi B: 4 provider Token PLN flat (tanpa layer channel), urut termurah.
+    // Fakta [OBSERVED] GET https://konterpulsa.net/beli (17-10-2026):
+    //   785 "PLN Prabayar" & 784 "Token PLN (Tanpa WA)" -> kategori token_listrik
+    //   709 "Token PLN" -> kategori token_pln_h2h
+    //   654 "Token PLN" -> kategori pln_prabayar
     key: "pln",
     label: "⚡ Token PLN",
-    group: [
-      { key: "token_listrik", label: "🏷️ Tanpa WA & Prabayar" },
-      { key: "pln_prabayar", label: "⚡ Token PLN (Reguler)" },
-      { key: "token_pln_h2h", label: "⚡ Token PLN H2H" },
+    flat: [
+      { key: "token_pln_h2h", op: "709", label: "⚡ Token PLN H2H" },
+      { key: "token_listrik", op: "785", label: "🏷️ PLN Prabayar" },
+      { key: "token_listrik", op: "784", label: "🏷️ Token PLN Tanpa WA" },
+      { key: "pln_prabayar", op: "654", label: "⚡ Token PLN Reguler" },
     ],
   },
   { key: "tagihan:88,732", label: "🧾 Tagihan PLN" },
@@ -925,14 +931,58 @@ const ORDER_MENU = [
 
 const ORDER_MENU_USED_KEYS = ["pulsa", "paket_internet", "game", "token_listrik", "pln_prabayar", "token_pln_h2h", "tagihan", "ewallet_bebas_nominal"];
 
+/* Judul layar kategori. Sengaja satu sumber agar /order dan "⬅️ Kategori" konsisten. */
+const KATEGORI_HEAD = "Pilih *kategori produk*:\n_(⚡/🏷️ = Token PLN, sudah urut termurah)_";
+
 function menuEntryCatKey(x) {
   return String(x.key).split(":")[0];
+}
+
+/* Harga termurah provider dari daftar voucher live (hanya paket aktif), atau null.
+ * Dipakai agar tombol Token PLN menampilkan harga nyata, bukan angka statis. */
+function cheapestFor(cfg, opId) {
+  const list = (cfg && cfg.vouchers && cfg.vouchers[opId]) || [];
+  let min = null;
+  for (const v of list) {
+    if (!v || v.status === 0) continue;
+    const n = parseInt(v.harga, 10);
+    if (isNaN(n)) continue;
+    if (min === null || n < min) min = n;
+  }
+  return min;
+}
+
+/* Tombol datar (kategori + operator sekaligus) untuk entri `flat`.
+ * - lewati kategori/provider yang sudah hilang dari config server,
+ * - urutkan termurah dulu; yang harga-nya tidak diketahui di akhir,
+ * - label dibatasi 64 karakter (limit label tombol Telegram [DOCS]). */
+function flatRows(cfg, entry) {
+  const items = [];
+  for (const it of entry.flat || []) {
+    const cat = order.categoryByKey(cfg, it.key);
+    if (!cat) continue;
+    const op = String(it.op);
+    // Operator harus benar-benar dijual kategori ini (sumber: categoryBlock parser).
+    if (!Object.prototype.hasOwnProperty.call(cat.operators || {}, op)) continue;
+    const min = cheapestFor(cfg, op);
+    let text = min === null ? it.label : it.label + " · " + formatHarga(min);
+    if (text.length > 64) text = it.label.slice(0, 64);
+    items.push({ op, key: it.key, min, text });
+  }
+  items.sort((a, b) => {
+    if (a.min === null) return b.min === null ? 0 : 1;
+    if (b.min === null) return -1;
+    return a.min - b.min;
+  });
+  return items.map((x) => ({ text: x.text, data: "catop:" + x.key + ":" + x.op }));
 }
 
 function orderMenuRows(cfg) {
   const rows = [];
   for (const x of ORDER_MENU) {
-    if (x.group) {
+    if (x.flat) {
+      rows.push(...flatRows(cfg, x));
+    } else if (x.group) {
       if (x.group.some((it) => cfg.categories.some((c) => c.key === it.key))) rows.push({ text: x.label, data: "submenu:" + x.key });
     } else if (x.autoRest) {
       rows.push({ text: x.label, data: "submenu:" + x.key });
@@ -957,6 +1007,14 @@ async function handleSubmenu(chatId, msg, st, menuKey) {
   if (!cfg) return reply(msg, "Sesi expired. Ketik /order untuk mulai lagi.");
   const entry = ORDER_MENU.find((x) => x.key === menuKey);
   if (!entry) return reply(msg, "Menu tidak ditemukan.");
+  // Entri datar (Token PLN Opsi B): tombol submenu lama tetap berfungsi — daftar provider ditampilkan.
+  if (entry.flat) {
+    const flat = flatRows(cfg, entry);
+    if (!flat.length) return reply(msg, "Provider Token PLN tidak tersedia. Coba /order.");
+    const rows = chunk(flat, 1);
+    rows.push([{ text: "⬅️ Menu Order", data: "back:kategori" }]);
+    return flowEdit(msg, st, "⚡ *Token PLN*\nPilih *provider* (harga termurah lebih dulu):", rows);
+  }
   const items = submenuItems(cfg, entry);
   if (!items.length) return reply(msg, "Tidak ada submenu tersedia.");
   const rows = chunk(items.map((it) => ({ text: it.label, data: "cat:" + it.key })), 2);
@@ -1056,7 +1114,7 @@ async function doOrder(msg) {
 
   const rows = orderMenuRows(cfg);
   rows.push([{ text: "⬅️ Menu Utama", data: "menu" }]);
-  const sent = await spin.finish("Pilih *kategori produk*:", { parse_mode: "Markdown", ...inlineButtons(rows) });
+  const sent = await spin.finish(KATEGORI_HEAD, { parse_mode: "Markdown", ...inlineButtons(rows) });
   if (!sent) return null;
   st.flowMsg = sent.message_id;
   return sent;
@@ -1277,6 +1335,7 @@ bot.on("callback_query", (q) => {
     if (data.startsWith("submenu:")) return handleSubmenu(chatId, q.message, st, data.slice(8));
     if (data.startsWith("brand:")) return handleBrandPick(chatId, q.message, st, data.slice(6));
     if (data.startsWith("cat:")) return handleCatPick(chatId, q.message, st, data.slice(4));
+    if (data.startsWith("catop:")) return handleCatOpPick(chatId, q.message, st, data.slice(6));
     if (data.startsWith("op:")) return handleOpPick(chatId, q.message, st, data.slice(3));
     if (data.startsWith("vch:")) return handleVchPick(chatId, q.message, st, data.slice(4));
     if (data.startsWith("vchp:")) {
@@ -1285,6 +1344,13 @@ bot.on("callback_query", (q) => {
     }
     if (data === "noop") return;
     if (data.startsWith("pay:")) return handlePayPick(chatId, q.message, st, data.slice(4));
+    if (data === "retry:submit") {
+      if (!st || !st.order || !st.order.pembayaran || !st.order.values) {
+        return reply(q.message, "⚠️ Sesi order sudah kedaluwarsa. Ketik /order untuk mulai lagi.", removeKeyboard());
+      }
+      st.lastSubmitAt = 0;
+      return doSubmit(chatId, q.message, st);
+    }
     if (data === "order:cancel") {
       const target = st.flowMsg;
       clearState(chatId);
@@ -1341,7 +1407,7 @@ async function handleBackKategori(chatId, msg, st) {
   st.voucherList = null;
   const rows = orderMenuRows(cfg);
   rows.push([{ text: "⬅️ Menu Utama", data: "menu" }]);
-  return flowEdit(msg, st, "Pilih *kategori produk*:", rows);
+  return flowEdit(msg, st, KATEGORI_HEAD, rows);
 }
 
 async function handleBackOperator(chatId, msg, st) {
@@ -1407,6 +1473,25 @@ async function handleOpPick(chatId, msg, st, opId) {
   return renderVouchers(msg, st);
 }
 
+/* Tombol datar kategori+operator (Opsi B Token PLN): lewati layer kategori,
+ * merek dan provider — pengguna langsung melihat daftar paket milik provider itu.
+ * Data: "catop:<kategori>:<operator>" [DOCS callback_data 1-64 byte]. */
+async function handleCatOpPick(chatId, msg, st, raw) {
+  const cfg = st.cfg;
+  if (!cfg) return reply(msg, "Sesi expired. Ketik /order untuk mulai lagi.");
+  const [key, rawOp] = String(raw).split(":");
+  const cat = order.categoryByKey(cfg, key);
+  if (!cat) return reply(msg, "Kategori tidak ditemukan. Pilih ulang kategori.");
+  const opId = String(rawOp || "");
+  const known = Object.prototype.hasOwnProperty.call(cat.operators || {}, opId);
+  if (!opId || !known) return reply(msg, "Provider ini sudah tidak tersedia. Pilih ulang kategori.");
+  st.order = { kategori: key, field: cat.field, operator: opId };
+  st.voucherList = null;
+  st.opGroups = null;
+  st.vouchPage = 0;
+  return renderVouchers(msg, st);
+}
+
 async function handleVchPick(chatId, msg, st, vchId) {
   let cfg = st.cfg;
   const opId = st.order.operator;
@@ -1438,8 +1523,9 @@ async function handleVchPick(chatId, msg, st, vchId) {
     st.step = "barcode";
     return flowEdit(msg, st, `Paket: *${cfg.operators[opId]} — ${v.nama}*\nHarga: ${formatHarga(v.harga)}\n\nKetik *Kode/Barcode Voucher*:`);
   }
-  const fieldLabel = st.order.field === "id_plgn" ? "ID Pelanggan / ID Game" : "Nomor HP / tujuan";
-  st.step = "nomor";
+  const isId = st.order.field === "id_plgn";
+  const fieldLabel = isId ? "ID Pelanggan / Nomor Meter / ID Game" : "Nomor HP / tujuan";
+  st.step = isId ? "idplgn" : "nomor";
   return flowEdit(msg, st, `Paket: *${cfg.operators[opId]} — ${v.nama}*\nHarga: ${formatHarga(v.harga)}\n\nKetik *${fieldLabel}* (atau /batal untuk batal):`);
 }
 
@@ -1477,9 +1563,37 @@ async function handleDirect(chatId, msg, st, payload) {
     st.step = "barcode";
     return flowEdit(msg, st, `Paket: *${opName} — ${v.nama}*\nHarga: ${formatHarga(v.harga)}\n\nKetik *Kode/Barcode Voucher*:`);
   }
-  const fieldLabel = cat.field === "id_plgn" ? "ID Pelanggan / ID Game" : "Nomor HP / tujuan";
-  st.step = "nomor";
+  const isId = cat.field === "id_plgn";
+  const fieldLabel = isId ? "ID Pelanggan / Nomor Meter / ID Game" : "Nomor HP / tujuan";
+  st.step = isId ? "idplgn" : "nomor";
   return flowEdit(msg, st, `Paket: *${opName} — ${v.nama}*\nHarga: ${formatHarga(v.harga)}\n\nKetik *${fieldLabel}* (atau /batal untuk batal):`);
+}
+
+/* Input ID Pelanggan / Nomor Meter / ID Game (kategori field=id_plgn).
+ * Server order juga mewajibkan Nomor HP kontak untuk kategori ini [OBSERVED],
+ * jadi setelah ID tersimpan flow lanjut meminta Nomor HP. */
+async function handleIdInput(chatId, msg, st, text) {
+  const cleaned = String(text).replace(/[^0-9]/g, "");
+  if (!/^[0-9]{10,15}$/.test(cleaned)) {
+    return reply(msg, "⚠️ ID Pelanggan/ID Game tidak valid. Masukkan 10-15 digit angka.");
+  }
+  if (!st.order.values) st.order.values = {};
+  st.order.values.id_plgn = cleaned;
+  st.step = "nomor";
+  const op = st.cfg.operators[st.order.operator] || st.order.operator;
+  const pairs = [
+    ["Jenis", orderCatLabel(st, st.order.kategori)],
+    ["Paket", op + " — " + st.order.voucherName],
+    ["Harga", formatHarga(st.order.harga)],
+    ["ID Pelanggan / Nomor Meter / ID Game", cleaned],
+  ];
+  return flowNewRich(
+    msg,
+    st,
+    orderTableHtml("Ringkasan Order", pairs) + "\n<b>Sekarang ketik Nomor HP (kontak — untuk pemberitahuan):</b>",
+    orderTableFallback("Ringkasan Order", pairs) + "\n\nSekarang ketik *Nomor HP* (kontak — untuk pemberitahuan):",
+    []
+  );
 }
 
 /* ==================== pembayaran & captcha & submit ==================== */
@@ -1490,17 +1604,29 @@ async function handlePayPick(chatId, msg, st, pay) {
   }
   st.order.pembayaran = pay;
   const payName = (st.cfg.payments[pay] && st.cfg.payments[pay].nama) || pay;
-  st.step = "captcha";
-  await flowEdit(msg, st, `Pembayaran: *${payName}*\nKetik *kode keamanan* (captcha) dari gambar yang dikirim di atas:`, []);
-  const ok = await sendCaptcha(chatId);
-  if (ok) st.step = "wait_captcha";
-  else {
-    clearState(chatId);
-    return reply(msg, "Silakan coba lagi dengan /order.");
-  }
+  // Server asli tidak wajiban captcha: HTML /order tidak memuat captcha & POST captcha kosong tetap diproses [OBSERVED].
+  // Jika server suatu saat mengaktifkan captcha, doSubmit mengirim gambar baru + meminta kode (fallback captchaFail).
+  st.order.captcha = "";
+  st.step = null;
+  await flowEdit(msg, st, `Pembayaran: *${payName}*\n🔄 *Order diproses...*`, []);
+  return doSubmit(chatId, msg, st);
 }
 
-async function doSubmit(chatId, msg, st) {
+/* Pesan bantuan verifikasi kata sandi (diminta / ditolak server konter). */
+const PWD_NEEDED =
+  "🔐 *Verifikasi kata sandi diperlukan.*\n" +
+  "Server konter meminta verifikasi kata sandi akun sebelum order diproses.\n" +
+  "• *Cara 1 (disarankan):* isi `KONTER_PASSWORD` (kata sandi login web konterpulsa) di Replit Secrets, lalu jalankan ulang bot.\n" +
+  "• *Cara 2:* verifikasi kata sandi sekali di web konterpulsa.net, lalu tekan *Coba Lagi*.";
+const PWD_DENIED =
+  "🔐 *Verifikasi kata sandi ditolak.*\n" +
+  "`KONTER_PASSWORD` di Secrets sepertinya bukan kata sandi akun web yang benar.\n" +
+  "• Cara lain: buka web konterpulsa.net, verifikasi kata sandi sekali di sana, lalu tekan *Coba Lagi*.";
+
+async function doSubmit(chatId, msg, st, opts = {}) {
+  // guard klik ganda / dobel submit dalam <2 detik
+  if (st.lastSubmitAt && Date.now() - st.lastSubmitAt < 2000) return;
+  st.lastSubmitAt = Date.now();
   const o = st.order;
   const canvas = st.flowMsg;
   const payName = (st.cfg.payments[o.pembayaran] && st.cfg.payments[o.pembayaran].nama) || o.pembayaran;
@@ -1517,6 +1643,20 @@ async function doSubmit(chatId, msg, st) {
     );
   }
   const csrf = fresh.csrfToken || st.cfg.csrfToken;
+
+  // Verifikasi kata sandi akun web otomatis (sekali per sesi login) sebelum submit.
+  // Web asli: GET /beli/password_verify?password=... lalu order bisa diproses [OBSERVED].
+  if (!opts.noAutoVerify && fresh.passwordVerifyNeeded === true && PASSWORD) {
+    const pv = await order.passwordVerify(PASSWORD);
+    if (pv.json && pv.json.success === false) {
+      await bot.deleteMessage(chatId, canvas).catch(() => {});
+      return spin.fail(PWD_DENIED, {
+        parse_mode: "Markdown",
+        ...inlineButtons([[{ text: "🔄 Coba Lagi", data: "retry:submit" }]]),
+      });
+    }
+  }
+
   const submit = await order.submitOrder({
     kategori: o.kategori,
     operator: o.operator,
@@ -1538,7 +1678,7 @@ async function doSubmit(chatId, msg, st) {
         id = "";
       }
     }
-    const nomor = (o.values && (o.values.nomor_hp || o.values.id_plgn || o.values.barcode_voucher)) || "";
+    const nomor = (o.values && (o.values.id_plgn || o.values.nomor_hp || o.values.barcode_voucher)) || "";
     await ledger.add({
       trx: String(id || ""),
       chat: chatId,
@@ -1611,17 +1751,45 @@ async function doSubmit(chatId, msg, st) {
       await sendCaptcha(chatId);
       return;
     }
-    if (
-      o.field === "nomor_hp" &&
-      o.values &&
-      o.values.nomor_hp &&
-      order.isPhoneValidationError(errs)
-    ) {
+    // Server meminta verifikasi kata sandi (sesi web belum / tidak terverifikasi).
+    if (order.needsPasswordVerify(errs)) {
+      if (!opts.noAutoVerify && PASSWORD) {
+        const pv = await order.passwordVerify(PASSWORD);
+        if (pv.json && pv.json.success) {
+          await spin.fail("🔐 Sesi web terverifikasi kata sandi — mengulang order…", { parse_mode: "Markdown" });
+          st.lastSubmitAt = 0;
+          return doSubmit(chatId, msg, st, { noAutoVerify: true });
+        }
+        st.lastSubmitAt = 0;
+        return spin.fail(PWD_DENIED, {
+          parse_mode: "Markdown",
+          ...inlineButtons([[{ text: "🔄 Coba Lagi", data: "retry:submit" }]]),
+        });
+      }
+      st.lastSubmitAt = 0;
+      return spin.fail(PWD_NEEDED, {
+        parse_mode: "Markdown",
+        ...inlineButtons([[{ text: "🔄 Coba Lagi", data: "retry:submit" }]]),
+      });
+    }
+    if (o.values && o.values.nomor_hp && order.isPhoneValidationError(errs)) {
       delete o.values.nomor_hp;
       st.step = "nomor";
+      const isContact = o.field !== "nomor_hp";
       return spin.fail(
-        "⚠️ *Nomor tujuan ditolak oleh situs.*\nPeriksa nomor yang dimasukkan dan pastikan nomornya sesuai dengan provider/paket yang dipilih. Ketik ulang nomor tujuan (contoh: `081234567890`). Pilihan paket Anda tetap tersimpan.",
+        isContact
+          ? "⚠️ *Nomor HP (kontak) ditolak oleh situs.*\nKetik ulang nomor HP yang valid (contoh: `081234567890`). ID & paket Anda tetap tersimpan."
+          : "⚠️ *Nomor tujuan ditolak oleh situs.*\nPeriksa nomor yang dimasukkan dan pastikan nomornya sesuai dengan provider/paket yang dipilih. Ketik ulang nomor tujuan (contoh: `081234567890`). Pilihan paket Anda tetap tersimpan.",
         { parse_mode: "Markdown" }
+      );
+    }
+    // Status 403 dari server konter = pembatasan kirim beruntun (rate limit),
+    // pulih setelah jeda ±30 detik [OBSERVED].
+    if (submit.status === 403) {
+      st.lastSubmitAt = 0;
+      return spin.fail(
+        "⏳ *Server menolak sementara (batas kirim).*\nOrder belum terkirim — permintaan terlalu cepat. Tunggu ±30 detik, lalu tekan *Coba Lagi*.",
+        { parse_mode: "Markdown", ...inlineButtons([[{ text: "🔄 Coba Lagi", data: "retry:submit" }]]) }
       );
     }
     out = "❌ *Order gagal:*\n" + errs.map((e) => "• " + e).join("\n") + "\n\nSilakan coba lagi /order.";
@@ -1824,17 +1992,27 @@ bot.on("message", async (msg) => {
     );
   }
 
+  if (st.step === "idplgn") {
+    return handleIdInput(chatId, msg, st, text);
+  }
+
   if (st.step === "nomor") {
     if (!st.order.values) st.order.values = {};
     const field = st.order.field || "nomor_hp";
-    const key = field === "id_plgn" ? "id_plgn" : "nomor_hp";
+    const isIdCat = field === "id_plgn";
+    // Kategori ID (PLN/game/tagihan dsb.): ID dulu, lalu Nomor HP kontak.
+    // Bila ID belum tersimpan (sesi lama), input di step ini dianggap ID.
+    if (isIdCat && !st.order.values.id_plgn) {
+      return handleIdInput(chatId, msg, st, text);
+    }
 
     let cleaned = text.replace(/[^0-9]/g, "");
-    if (key === "nomor_hp") {
-      if (cleaned.startsWith("62") && cleaned.length >= 11) cleaned = "0" + cleaned.slice(2);
-      if (!/^[0-9]{10,13}$/.test(cleaned)) {
-        return reply(msg, "⚠️ Nomor HP tidak valid. Masukkan 10-13 digit angka.\nContoh: 081234567890");
-      }
+    if (cleaned.startsWith("62") && cleaned.length >= 11) cleaned = "0" + cleaned.slice(2);
+    if (!/^[0-9]{10,13}$/.test(cleaned)) {
+      return reply(msg, "⚠️ Nomor HP tidak valid. Masukkan 10-13 digit angka.\nContoh: 081234567890");
+    }
+    if (!isIdCat) {
+      // Nomor tujuan (pulsa/barcode): cocokkan prefix provider bila validator tersedia.
       const vx = validatorForOp(st, st.order.operator);
       const vres = vx ? checkNomorPrefix(vx, cleaned) : true;
       if (vres !== true) {
@@ -1844,13 +2022,9 @@ bot.on("message", async (msg) => {
           { parse_mode: "Markdown" }
         );
       }
-    } else {
-      if (!/^[0-9]{10,15}$/.test(cleaned)) {
-        return reply(msg, "⚠️ ID Pelanggan/ID Game tidak valid. Masukkan 10-15 digit angka.");
-      }
     }
 
-    st.order.values[key] = cleaned;
+    st.order.values.nomor_hp = cleaned;
     const pay = st.cfg.payments;
     const rows = [];
     if (isAllowed(chatId) && pay.balance) rows.push([{ text: "Saldo Akun (" + formatHarga(st.order.harga) + ")", data: "pay:balance" }]);
@@ -1870,8 +2044,9 @@ bot.on("message", async (msg) => {
       ["Jenis", orderCatLabel(st, st.order.kategori)],
       ["Paket", op + " — " + st.order.voucherName],
       ["Harga", formatHarga(st.order.harga)],
-      ["Nomor", cleaned],
     ];
+    if (st.order.values.id_plgn) pairs.push(["ID Pelanggan / Nomor Meter / ID Game", st.order.values.id_plgn]);
+    pairs.push([isIdCat ? "Nomor HP" : "Nomor", cleaned]);
     return flowNewRich(
       msg,
       st,
