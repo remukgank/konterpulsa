@@ -66,10 +66,10 @@ test("struk: SN/Ref & Token panjang tampil penuh tanpa elipsis", () => {
   assert.ok(!svg.includes("…"), "tidak boleh ada elipsis pemotong");
 });
 
-test("struk: SN sangat panjang wrap 2 baris, tetap tanpa elipsis", () => {
+test("struk: SN sangat panjang pada struk umum wrap penuh tanpa elipsis", () => {
   const sn = "1116-5582-3664-4430-2835-4927-3310-9988-7766-5544-3322";
   const svg = buildSvg({
-    trx: "1", tanggal: "", produk: "PLN Prabayar — 100.000.000", provider: "Token PLN",
+    trx: "1", tanggal: "", produk: "Voucher Axis — 100.000.000", provider: "Axis",
     nomor: "081234567890", idPelanggan: "", pelanggan: "", metode: "QRIS",
     harga: "Rp 100.000.000", snRef: sn, token: "", status: "sukses",
   });
@@ -82,6 +82,41 @@ test("struk: SN sangat panjang wrap 2 baris, tetap tanpa elipsis", () => {
   assert.ok(svg.includes(">Total Pembayaran</text>"));
   // nama item panjang + harga besar: font item menyusut supaya tidak menabrak kolom Harga
   assert.ok(/font-size="(?:9|10|11)"/.test(svg), "font item harus menyusut pada kasus panjang");
+});
+
+test("struk PLN memakai desain baru dan menampilkan SN/Ref lengkap sebagai informasi utama", () => {
+  const sn = "3492-8081-2284-6100-5837-2944/MESIN/R1M/900VA/33.70";
+  const svg = buildSvg({
+    trx: "1234567", tanggal: "20/10/2026 10:42",
+    produk: "PLN Prabayar — 50.000", provider: "Token PLN",
+    nomor: "0812-0000-0000", idPelanggan: "86007117103", pelanggan: "Pelanggan PLN",
+    metode: "QRIS", harga: "Rp 55.000", snRef: sn, token: "", status: "sukses",
+  });
+
+  assert.ok(svg.includes("PLN PRABAYAR"));
+  assert.ok(svg.includes("SN / REF"));
+  assert.ok(svg.includes("Referensi transaksi"));
+  assert.ok(!svg.includes("BUKAN TOKEN"));
+  const snLines = [...svg.matchAll(/<text class="pln-snref-code"[^>]*>([^<]*)<\/text>/g)].map((match) => match[1]);
+  assert.strictEqual(snLines.join(""), sn, "seluruh SN/Ref harus tampil persis");
+});
+
+test("struk PLN membedakan token dan SN/Ref serta tidak memotong kode panjang", () => {
+  const sn = "3492-8081-2284-6100-5837-2944/MESIN/R1M/900VA/33.70";
+  const token = "1234567890123456789012345678901234567890";
+  const svg = buildSvg({
+    trx: "1234567", tanggal: "20/10/2026 10:42",
+    produk: "PLN Prabayar — 100.000", provider: "Token PLN",
+    nomor: "0812-0000-0000", idPelanggan: "86007117103", pelanggan: "Pelanggan PLN",
+    metode: "QRIS", harga: "Rp 105.000", snRef: sn, token, status: "sukses",
+  });
+
+  const snLines = [...svg.matchAll(/<text class="pln-snref-code"[^>]*>([^<]*)<\/text>/g)].map((match) => match[1]);
+  const tokenLines = [...svg.matchAll(/<text class="pln-token-code"[^>]*>([^<]*)<\/text>/g)].map((match) => match[1]);
+  assert.strictEqual(snLines.join(""), sn);
+  assert.strictEqual(tokenLines.join(""), token);
+  assert.ok(svg.indexOf("SN / REF") < svg.indexOf("KODE UNTUK METERAN"));
+  assert.ok(!svg.includes("…"));
 });
 
 test("struk: estTextWidth & fitSmartLines", () => {
