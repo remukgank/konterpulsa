@@ -96,6 +96,32 @@ function estTextWidth(text, fontSize, bold = false) {
   return String(text == null ? "" : text).length * fontSize * perChar;
 }
 
+/* Karakter pemisah yang wajar untuk dipotong (SN/Ref biasanya Pakai "-" atau "/"). */
+const WRAP_BREAK = /[\s\-\/,;|]/;
+
+/* Potong teks panjang per `cap` karakter, utamakan batas pemisah terdekat
+ * supaya grup angka/kode tidak terbelah di tengah (mis. "…-4927-" bukan "…-4927-331"). */
+function wrapAtBreaks(text, cap) {
+  const lines = [];
+  let rest = String(text == null ? "" : text);
+  const limit = Math.max(1, cap);
+  while (rest.length > limit) {
+    let cut = -1;
+    // Minimal separuh baris terisi agar baris tidak jadi terlalu pendek.
+    for (let i = limit; i > Math.floor(limit / 2); i--) {
+      if (WRAP_BREAK.test(rest[i - 1])) {
+        cut = i;
+        break;
+      }
+    }
+    if (cut <= 0) cut = limit;
+    lines.push(rest.slice(0, cut).replace(/\s+$/, ""));
+    rest = rest.slice(cut).replace(/^\s+/, "");
+  }
+  if (rest.length || !lines.length) lines.push(rest);
+  return lines;
+}
+
 /* Tampilkan teks penuh: turunkan ukuran font dulu, baru wrap bila perlu. */
 function fitSmartLines(text, maxWidth, maxSize = 11, minSize = 8) {
   const t = String(text == null ? "" : text);
@@ -103,11 +129,7 @@ function fitSmartLines(text, maxWidth, maxSize = 11, minSize = 8) {
     if (estTextWidth(t, size, false) <= maxWidth) return [{ text: t, size }];
   }
   const cap = Math.max(1, Math.floor(maxWidth / (minSize * 0.64)));
-  const lines = [];
-  for (let i = 0; i < t.length; i += cap) {
-    lines.push({ text: t.slice(i, i + cap), size: minSize });
-  }
-  return lines;
+  return wrapAtBreaks(t, cap).map((line) => ({ text: line, size: minSize }));
 }
 
 function truncate(value, maxLength) {

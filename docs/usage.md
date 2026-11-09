@@ -74,6 +74,39 @@ ditentukan otomatis; tinggal isi nomor + bayar + captcha).
 
 > Ketik `/batal` kapan saja untuk membatalkan proses order.
 
+### ⚡ Token PLN (tombol datar, harga termurah dulu)
+
+Menu **Token PLN** tidak lagi memakai submenu channel. Di layar kategori langsung
+tampil 4 tombol provider dengan harga paket termurah saat itu, diurutkan dari yang
+paling murah:
+
+| Tombol | Kategori web | Operator |
+| --- | --- | --- |
+| ⚡ Token PLN H2H | `token_pln_h2h` | 709 |
+| 🏷️ PLN Prabayar | `token_listrik` | 785 |
+| 🏷️ Token PLN Tanpa WA | `token_listrik` | 784 |
+| ⚡ Token PLN Reguler | `pln_prabayar` | 654 |
+
+- Satu klik → langsung daftar nominal provider tersebut (tanpa pilih kategori/channel lagi).
+- Harga pada label diambil live dari daftar paket; jika server tidak mengirim harga,
+  label tampil tanpa nominal dan tombol diletakkan paling bawah.
+- Provider yang sudah tidak ada di katalog otomatis disembunyikan (tidak ada tombol mati).
+- Tombol "⬅️ Provider" tetap membawa kembali ke daftar provider kategori itu.
+
+### ✅ Konfirmasi Pembayaran (anti-spam)
+
+Setelah QRIS dibayar, tombol **✅ Konfirmasi Pembayaran** tidak lagi menumpuk pesan baru:
+
+- **Satu pesan status per transaksi** — pesan yang sama diperbarui
+  (Pending → Diproses → Sukses), termasuk saat notifikasi situs masuk.
+- Tekan berulang dalam **20 detik** → hanya notifikasi singkat ("Tunggu N detik"),
+  tanpa pesan baru.
+- Status sudah **Sukses/Batal/Gagal** → server tidak dipanggil lagi, cukup
+  notifikasi "Transaksi sudah Sukses ✅".
+- Pesan memakai kalimat biasa ("Konfirmasi diterima — menunggu verifikasi"),
+  bukan kode HTTP mentah (mis. `307`); kode asli dicatat di log admin.
+- Bila pesan status dihapus manual, bot otomatis mengirim pesan status baru.
+
 ## Catatan penting
 
 - **Harga & ketersediaan** bisa berubah; selalu cek ulang sebelum order.

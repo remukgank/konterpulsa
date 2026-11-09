@@ -217,6 +217,44 @@ function checkNomorPrefix(vEntry, nomor) {
   }
 }
 
+/* Konfirmasi pembayaran: ubah kode HTTP mentah (mis. 307) menjadi kalimat
+ * yang bisa dimengerti pengguna. Kode asli tetap dicatat di log. */
+function konfirmHttpHint(code) {
+  const n = parseInt(code, 10);
+  if (!Number.isFinite(n)) return "Konfirmasi terkirim.";
+  if (n >= 200 && n < 400) return "✅ Konfirmasi diterima.";
+  if (n >= 400 && n < 500) return "⚠️ Konfirmasi ditolak server.";
+  if (n >= 500) return "⚠️ Server konfirmasi sedang bermasalah.";
+  return "Konfirmasi terkirim.";
+}
+
+/* Status yang sudah final: tidak perlu memanggil server lagi. */
+const FINAL_STATUS_RE = /sukses|berhasil|batal|gagal|ditolak/i;
+
+/* Putuskan apakah tekan "Konfirmasi Pembayaran" perlu memanggil server.
+ * - status final  -> tidak (hemat request + tidak spam)
+ * - dalam cooldown -> tidak (cegah tekan berulang)
+ * Hasil: { blocked, reason, toast, waitMs }. */
+function confirmGate(opts) {
+  const o = opts || {};
+  const status = String(o.status == null ? "" : o.status);
+  const now = Number.isFinite(o.now) ? o.now : Date.now();
+  const lastAt = Number.isFinite(o.lastAt) ? o.lastAt : 0;
+  const cooldownMs = Number.isFinite(o.cooldownMs) ? o.cooldownMs : 20000;
+  if (FINAL_STATUS_RE.test(status)) {
+    const s = status.trim();
+    const done = /sukses|berhasil/i.test(s) && !/pending|proses|menunggu/i.test(s);
+    const toast = (done ? "Transaksi sudah " + s + " ✅" : "Status transaksi: " + s + " — tidak perlu konfirmasi lagi.").slice(0, 200);
+    return { blocked: true, reason: "final", toast, waitMs: 0 };
+  }
+  const waitMs = lastAt + cooldownMs - now;
+  if (waitMs > 0) {
+    const toast = ("Tunggu " + Math.ceil(waitMs / 1000) + " detik sebelum konfirmasi lagi.").slice(0, 200);
+    return { blocked: true, reason: "cooldown", toast, waitMs };
+  }
+  return { blocked: false, reason: "", toast: "", waitMs: 0 };
+}
+
 module.exports = {
   escHtml,
   escMd,
@@ -237,4 +275,6 @@ module.exports = {
   formatHargaCompact,
   checkNomorPrefix,
   MAX_TG_TEXT,
+  konfirmHttpHint,
+  confirmGate,
 };

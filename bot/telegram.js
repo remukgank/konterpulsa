@@ -216,6 +216,12 @@ function startStream(chatId, stageText) {
       }).catch(() => {});
       return p;
     },
+    /* Tutup stream tanpa pesan final — dipakai bila hasil akhir cukup meng-edit
+     * pesan status yang sudah ada (draft ephemeral hilang sendiri <=30 detik). */
+    close() {
+      alive();
+      ACTIVE_STREAMS.delete(draftId);
+    },
     fail(text, opts = {}) {
       const p = enqueue(() =>
         callWith429Retry(() => core.api.sendMessage(chatId, text, opts), "stream.fail")

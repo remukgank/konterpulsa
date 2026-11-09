@@ -232,6 +232,82 @@ function userName(msg) {
 
 const QRIS_POLLS = {};
 
+/* ===== Satu pesan status per transaksi (anti-spam) =====
+ * STATUS_MSG: "chatId:trx" -> { msgId, text, at }  (pesan status yang di-edit, bukan dikirim baru)
+ * CONFIRM_STATE: "chatId:trx" -> { at }            (cooldown tekan tombol konfirmasi)
+ * ACKED_QUERIES: callback query yang sudah dijawab sendiri lewat ackWithToast(). */
+const STATUS_MSG = new Map();
+const CONFIRM_STATE = new Map();
+const ACKED_QUERIES = new Set();
+const STATUS_TTL_MS = 24 * 60 * 60 * 1000;
+
+function statusKey(chatId, trx) {
+  return String(chatId) + ":" + String(trx);
+}
+
+function pruneStatusState(now) {
+  for (const [k, v] of STATUS_MSG) if (now - v.at > STATUS_TTL_MS) STATUS_MSG.delete(k);
+  for (const [k, v] of CONFIRM_STATE) if (now - v.at > STATUS_TTL_MS) CONFIRM_STATE.delete(k);
+}
+
+/* Jawab callback query sekaligus tampilkan toast. Dipakai untuk kasus yang
+ * tidak perlu pesan baru (status sama / sudah final / masih cooldown). */
+function ackWithToast(q, text) {
+  if (!q || !q.id) return;
+  ACKED_QUERIES.add(String(q.id));
+  const body = { text: String(text || "").slice(0, 200) };
+  // Callback wajib dijawab; satu retry singkat bila percobaan pertama gagal.
+  bot
+    .answerCallbackQuery(q.id, body)
+    .catch(() => bot.answerCallbackQuery(q.id, body).catch(() => {}));
+}
+
+/* Kirim ATAU edit pesan status transaksi.
+ * - teks sama -> tidak melakukan apa pun (hindari pesan duplikat)
+ * - sudah ada pesan -> editMessageText
+ * - pesan hilang/tidak bisa diedit -> kirim pesan baru sebagai fallback
+ * opts.finish: fungsi spin.finish (dipakai saat pertama kali agar draft streaming diganti). */
+async function updateStatusOnce(chatId, trxId, text, opts = {}) {
+  const key = statusKey(chatId, trxId);
+  const now = Date.now();
+  pruneStatusState(now);
+  const parse = opts.parse_mode || "Markdown";
+  const cur = STATUS_MSG.get(key);
+  const closeSpin = () => {
+    if (typeof opts.close === "function") opts.close();
+  };
+  if (cur && cur.text === text) {
+    closeSpin();
+    return { skipped: true, msgId: cur.msgId };
+  }
+  if (cur && cur.msgId) {
+    try {
+      await bot.editMessageText(chatId, cur.msgId, text, { parse_mode: parse });
+      cur.text = text;
+      cur.at = now;
+      closeSpin();
+      return { edited: true, msgId: cur.msgId };
+    } catch (e) {
+      const d = ((e && (e.description || e.message)) || "").toLowerCase();
+      if (d.includes("not modified")) {
+        cur.text = text;
+        cur.at = now;
+        closeSpin();
+        return { skipped: true, msgId: cur.msgId };
+      }
+      console.log("[STATUS] edit #" + trxId + " gagal (" + (e && e.message) + "), kirim pesan baru");
+      STATUS_MSG.delete(key);
+    }
+  }
+  const m =
+    typeof opts.finish === "function"
+      ? await opts.finish(text, { parse_mode: parse })
+      : await reply({ chat: { id: chatId } }, text, { parse_mode: parse });
+  if (m && m.message_id) STATUS_MSG.set(key, { msgId: m.message_id, text, at: now });
+  return { sent: true, msgId: m && m.message_id };
+}
+
+
 function gracefulShutdown() {
   console.log("[SHUTDOWN] Cleaning up...");
   // Clear all QRIS polls
@@ -278,20 +354,20 @@ async function qrisTick(chatId, entry) {
         });
       }
       if (/sukses/i.test(stNow)) {
-        const m = await reply(
-          { chat: { id: chatId } },
+        const res = await updateStatusOnce(
+          chatId,
+          entry.trx,
           isDep
             ? "✅ *Deposit terbayar!*\nTrx *#" + entry.trx + "* — Status: Sukses\nCek /deposit."
-            : "✅ *Pembayaran diterima & pengisian sukses!*\nTrx *#" + entry.trx + "*\nStatus: " + stNow,
-          { parse_mode: "Markdown" }
+            : "✅ *Pembayaran diterima & pengisian sukses!*\nTrx *#" + entry.trx + "*\nStatus: " + stNow
         );
-        if (m && m.message_id) bot.setMessageReaction(chatId, m.message_id, "👍").catch(() => {});
+        if (res && res.msgId) bot.setMessageReaction(chatId, res.msgId, "👍").catch(() => {});
         clearTimeout(entry.timer);
         delete QRIS_POLLS[chatId];
         return;
       }
       if (/batal|dibatalkan|gagal/i.test(stNow)) {
-        await reply({ chat: { id: chatId } }, "⚠️ Trx *#" + entry.trx + "* dibatalkan/gagal.\nStatus: " + stNow, { parse_mode: "Markdown" });
+        await updateStatusOnce(chatId, entry.trx, "⚠️ Trx *#" + entry.trx + "* dibatalkan/gagal.\nStatus: " + stNow);
         clearTimeout(entry.timer);
         delete QRIS_POLLS[chatId];
         return;
@@ -304,10 +380,10 @@ async function qrisTick(chatId, entry) {
     entry.timer = setTimeout(qrisTick, 30000, chatId, entry);
   } else {
     console.log("[QRIS] polling trx #" + entry.trx + " dihentikan (maks 25×30s ~12.5 menit), status terakhir: " + entry.last || "-");
-    await reply(
-      { chat: { id: chatId } },
-      "⏳ *Polling QRIS dihentikan*\nTrx *#" + entry.trx + "* — status terakhir: *" + (entry.last || "-") + "*\nCek kembali via /riwayat atau tekan *Konfirmasi Pembayaran*.",
-      { parse_mode: "Markdown" }
+    await updateStatusOnce(
+      chatId,
+      entry.trx,
+      "⏳ *Polling QRIS dihentikan*\nTrx *#" + entry.trx + "* — status terakhir: *" + (entry.last || "-") + "*\nCek kembali via /riwayat atau tekan *Konfirmasi Pembayaran*."
     ).catch(() => {});
     delete QRIS_POLLS[chatId];
   }
@@ -787,7 +863,9 @@ async function pollNotifikasi() {
       notifStatusIcon(n.teks) + " <b>Update Transaksi</b>\n" +
       "📦 Trx <b>#" + escHtml(tm[1]) + "</b> — " + escHtml(n.waktu) + "\n" +
       "<blockquote>" + escHtml(n.teks.slice(0, 600)) + "</blockquote>";
-    bot.sendMessage(entry.chat, text, { parse_mode: "HTML" }).catch(() => {});
+    // Satu pesan status per transaksi: notifikasi situs meng-edit pesan status
+    // yang sama (bukan menambah pesan baru). Dedupe id notifikasi sudah di atas.
+    updateStatusOnce(entry.chat, tm[1], text, { parse_mode: "HTML" }).catch(() => {});
     console.log("[NOTIF] push trx #" + tm[1] + " -> chat " + entry.chat);
   }
 }
@@ -1161,7 +1239,7 @@ async function doKirimQr(msg, trx) {
   return reply(msg, "QR #" + id + " terkirim" + (target !== chatId ? " ke pengguna." : "") + " Polling status dimulai.");
 }
 
-async function handleKonfirm(chatId, msg, trx) {
+async function handleKonfirm(chatId, msg, trx, q) {
   const id = parseId(String(trx));
   const isDep = !!depLedger.get(id);
   if (!isAllowed(chatId)) {
@@ -1170,6 +1248,26 @@ async function handleKonfirm(chatId, msg, trx) {
       return reply(msg, "🔒 Ini bukan transaksi Anda.");
     }
   }
+  /* Anti-spam: jangan panggil server / kirim pesan bila status sudah final
+   * atau tombol ditekan berulang dalam cooldown. Toast saja (tanpa pesan baru). */
+  const knownEnt = isDep ? depLedger.get(id) : ledger.get(id);
+  const knownStatus = isDep
+    ? (knownEnt && knownEnt.status) || ""
+    : [knownEnt && knownEnt.statusPembayaran, knownEnt && knownEnt.statusPengisian]
+        .filter(Boolean)
+        .join(" / ");
+  const cKey = statusKey(chatId, id);
+  const gate = util.confirmGate({
+    status: knownStatus,
+    lastAt: (CONFIRM_STATE.get(cKey) || {}).at,
+    now: Date.now(),
+  });
+  if (gate.blocked) {
+    ackWithToast(q, gate.toast);
+    return;
+  }
+  CONFIRM_STATE.set(cKey, { at: Date.now() });
+
   const spin = await startStream(chatId, "Mengirim konfirmasi pembayaran #" + id + "...");
   const payEnt = isDep ? depLedger.get(id) : ledger.get(id);
   const rawKey = payEnt ? (isDep ? payEnt.metodeKey : payEnt.pembayaranKey) || "" : "";
@@ -1183,6 +1281,7 @@ async function handleKonfirm(chatId, msg, trx) {
   } catch (e) {
     return spin.fail("Gagal konfirmasi: " + e.message);
   }
+  console.log("[KONFIRM] trx=" + id + " http=" + (r && r.status));
   let st = "";
   let stLabel = "-";
   if (isDep) {
@@ -1211,18 +1310,22 @@ async function handleKonfirm(chatId, msg, trx) {
       });
     }
   }
-  await spin.finish("Konfirmasi terkirim (status " + r.status + ").\nStatus trx *#" + id + "*: " + stLabel, { parse_mode: "Markdown" });
+  /* Satu pesan status per transaksi: pertama dikirim, berikutnya diedit. */
+  const res = await updateStatusOnce(chatId, id, util.konfirmHttpHint(r && r.status) + "\nStatus trx *#" + id + "*: " + stLabel, {
+    finish: spin.finish,
+    close: spin.close,
+  });
   const entry = isDep ? depLedger.get(id) : ledger.get(id);
   const target = entry ? Number(entry.chat) : chatId;
   if (/sukses/i.test(st)) {
-    bot.setMessageReaction(chatId, msg.message_id, "👍").catch(() => {});
+    if (res && res.msgId) bot.setMessageReaction(chatId, res.msgId, "👍").catch(() => {});
     if (target !== chatId) {
-      await reply(
-        { chat: { id: target } },
+      await updateStatusOnce(
+        target,
+        id,
         isDep
           ? "✅ *Deposit terbayar!*\nTrx *#" + id + "* — Status: Sukses\nCek /deposit."
-          : "✅ *Pembayaran diterima & pengisian sukses!*\nTrx *#" + id + "*\nStatus: " + st,
-        { parse_mode: "Markdown" }
+          : "✅ *Pembayaran diterima & pengisian sukses!*\nTrx *#" + id + "*\nStatus: " + st
       ).catch(() => {});
     }
     // Bersihkan polling QRIS milik pemilik transaksi (target), bukan cuma chat yang menekan tombol.
@@ -1331,7 +1434,7 @@ bot.on("callback_query", (q) => {
     if (data.startsWith("hist:")) return handleHistoryDetail(chatId, q.message, data.slice(5));
     if (data.startsWith("struk:")) return handleStruk(chatId, q.message, data.slice(6));
     if (data.startsWith("qr:")) return handleQrPick(chatId, q.message, data.slice(3));
-    if (data.startsWith("konfirm:")) return handleKonfirm(chatId, q.message, data.slice(8));
+    if (data.startsWith("konfirm:")) return handleKonfirm(chatId, q.message, data.slice(8), q);
     if (data.startsWith("submenu:")) return handleSubmenu(chatId, q.message, st, data.slice(8));
     if (data.startsWith("brand:")) return handleBrandPick(chatId, q.message, st, data.slice(6));
     if (data.startsWith("cat:")) return handleCatPick(chatId, q.message, st, data.slice(4));
@@ -1365,7 +1468,11 @@ bot.on("callback_query", (q) => {
     }
     return reply(q.message, "Perintah tidak dikenal.");
     } finally {
-      bot.answerCallbackQuery(q.id).catch(() => {});
+      // Callback wajib selalu dijawab. Handler yang sudah menjawab sendiri (toast)
+      // ditandai di ACKED_QUERIES agar tidak terjadi ack ganda [DOCS answerCallbackQuery].
+      const qid = String(q.id);
+      if (ACKED_QUERIES.has(qid)) ACKED_QUERIES.delete(qid);
+      else bot.answerCallbackQuery(q.id).catch(() => {});
     }
   })().catch((e) => reply(q.message, "Error: " + e.message));
 });
