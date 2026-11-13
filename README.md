@@ -1,6 +1,6 @@
-# KonterKuota Bot 🛒
+# KonterPulsa Bot 🛒
 
-Bot Telegram untuk [konterkuota](https://t.me/konterkuotacombot) — cek harga, saldo,
+Bot Telegram untuk [KonterPulsa](https://t.me/konterpulsabot) — cek harga, saldo,
 riwayat transaksi, mutasi, dan melakukan **order pulsa/kuota/game/token PLN/PPOB**
 langsung dari chat Telegram.
 
@@ -14,7 +14,7 @@ session akun Anda — tanpa API khusus dari penyedia.
 
 ## 🤖 Coba bot yang sudah jadi
 
-Bot sudah online & siap dipakai: **[t.me/konterkuotacombot](https://t.me/konterkuotacombot)**
+Bot sudah online & siap dipakai: **[t.me/konterpulsabot](https://t.me/konterpulsabot)**
 — buka langsung, lalu tekan **/start**.
 
 ---
@@ -22,7 +22,7 @@ Bot sudah online & siap dipakai: **[t.me/konterkuotacombot](https://t.me/konterk
 ## Fitur
 
 - **🔍 Cari Harga** — cari produk & harga kapan saja (tanpa login), langsung bisa order.
-- **🛒 Order interaktif** — alur kategori → provider → paket → nomor → bayar → captcha.
+- **🛒 Order interaktif** — alur kategori → provider → paket → nomor → bayar.
   Pembayaran: **Saldo Akun** dan **QRIS** (QR + polling status + konfirmasi pembayaran).
 - **💰 Saldo & Profil** — cek saldo dan info akun *(khusus admin)*.
 - **📋 Riwayat Transaksi** — tabel native (rich message Telegram); ada tombol
@@ -80,9 +80,10 @@ Detail lengkap: [docs/setup.md](docs/setup.md).
 | Variabel | Wajib | Deskripsi |
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | Ya | Token bot dari @BotFather |
-| `KONTER_COOKIE` | Ya | Cookie session konterkuota (login browser) |
+| `KONTER_COOKIE` | Ya | Cookie session konterpulsa.net (login browser) |
 | `ALLOWED_CHAT_IDS` | Tidak | Daftar chat id admin, pisahkan koma. Kosong = semua boleh (tidak disarankan) |
 | `KONTER_BASE_URL` | Tidak | URL situs (default: lihat `.env.example`) |
+| `KONTER_PASSWORD` | Tidak | Kata sandi login web konter — untuk verifikasi kata sandi otomatis saat order |
 
 ## Struktur proyek
 
@@ -114,8 +115,10 @@ src/index.js → src/{order,akun,harga}.js
               situs konter (HTTPS)
 ```
 
-- Order mewajibkan **captcha** per-session; bot mengunduh gambar captcha memakai
-  cookie yang sama lalu mengirim buffer-nya ke Telegram (bukan URL telanjang).
+- Server web kini **tidak memproses captcha** saat order (POST tanpa captcha tetap
+  diproses) [OBSERVED]; bot mengirim order tanpa captcha otomatis. Bila server suatu
+  saat menuntutnya kembali, bot mengunduh gambar captcha (cookie yang sama, bukan URL
+  telanjang) dan mengirimnya ke Telegram untuk diisi manual.
 - Pembayaran memakai **Saldo Akun** (`balance`) dan **QRIS** (`qris_livin_nt`).
 - Endpoint yang dipakai dan detail kategori: [docs/architecture.md](docs/architecture.md).
 
@@ -134,7 +137,7 @@ node scripts/test-order.js               # config order + captcha (butuh cookie)
 - Kredensial hanya di `.env` / Replit Secrets — `.env` & `data/` masuk `.gitignore`.
 - Perintah sensitif dibatasi `ALLOWED_CHAT_IDS`; `/harga` (read-only) bebas.
 - Cookie bisa kedaluwarsa → perbarui `KONTER_COOKIE` dari browser.
-- Setelah bot stabil, disarankan logout & login ulang konterkuota lalu ganti cookie
+- Setelah bot stabil, disarankan logout & login ulang konterpulsa.net lalu ganti cookie
   (batch session yang mungkin bocor di chat).
 
 ## Dokumentasi lain

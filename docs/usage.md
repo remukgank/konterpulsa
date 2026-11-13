@@ -1,4 +1,4 @@
-# Penggunaan Bot KonterKuota
+# Penggunaan Bot KonterPulsa
 
 ## Tampilan per peran
 
@@ -58,7 +58,7 @@ Output:
 
 Pada hasil pencarian, ada tombol `🛒` per produk (stok tersedia) untuk langsung
 masuk alur order tanpa memilih kategori lagi (kategori, operator, dan paket
-ditentukan otomatis; tinggal isi nomor + bayar + captcha).
+ditentukan otomatis; tinggal isi nomor + bayar).
 
 ## Contoh `/order` (alur interaktif)
 

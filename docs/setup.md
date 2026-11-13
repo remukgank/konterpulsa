@@ -1,4 +1,4 @@
-# Setup Bot KonterKuota
+# Setup Bot KonterPulsa
 
 ## 1. Persiapkan token bot Telegram
 
@@ -6,7 +6,7 @@
 2. Kirim `/newbot`, ikuti petunjuk untuk membuat bot baru.
 3. Salin **token** (format `123456:ABC-DEF...`).
 
-## 2. Persiapkan cookie session konterkuota
+## 2. Persiapkan cookie session konterpulsa.net
 
 Cookie ini memberi akses atas nama akun Anda, jadi jaga kerahasiaannya.
 
@@ -71,5 +71,5 @@ node scripts/test-order.js            # config order + captcha (butuh cookie)
 ## Keamanan setelah selesai
 
 Karena cookie pernah dibagikan di chat, disarankan **logout & login ulang**
-konterkuota setelah bot stabil, lalu perbarui `KONTER_COOKIE` — supaya session lama
+konterpulsa.net setelah bot stabil, lalu perbarui `KONTER_COOKIE` — supaya session lama
 yang mungkin bocor tidak lagi valid.

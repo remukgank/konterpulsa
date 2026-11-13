@@ -1,4 +1,4 @@
-# Arsitektur Bot KonterPulsa (KonterKuota)
+# Arsitektur Bot KonterPulsa
 
 Bot Telegram ini berinteraksi langsung dengan situs konter (via HTTP)
 tanpa API khusus. Semua komunikasi meniru perilaku situs (fetch HTML + POST form),
@@ -85,11 +85,13 @@ src/index.js  ── perintah/menu interaktif ──►  src/order.js  /  src/ak
 
 ## Catatan penting order
 
-- Setiap transaksi mewajibkan **captcha** yang dibangkitkan per-session. Bot mengunduh
-  gambar captcha **dengan cookie yang sama** (`getBuffer`) lalu mengirim buffer-nya ke
-  Telegram sebagai photo. User mengetik kode, bot submit dengan cookie yang sama.
-  Ini penting: jika dikirim sebagai URL telanjang ke Telegram, Telegram men-download
-  tanpa cookie sehingga captcha tidak cocok dengan session order.
+- **Update 16-10-2026 [OBSERVED]:** server web **tidak memproses captcha** saat order
+  (POST tanpa captcha tetap diproses; server tidak menuntutnya lagi). Bot kini mengirim
+  order **tanpa captcha** otomatis. Endpoint `GET /captcha` tetap dipertahankan sebagai
+  fallback: bila server kembali menuntut captcha, bot mengunduh gambarnya **dengan
+  cookie yang sama** (`getBuffer`) lalu mengirim buffer-nya ke Telegram sebagai photo
+  (bukan URL telanjang — Telegram men-download tanpa cookie sehingga captcha tidak
+  cocok dengan session order).
 - Pembayaran yang dipakai bot: **Saldo Akun** (`balance`, hanya admin) dan **QRIS**.
 - QRIS: QR di-generasi & di-upscale, polling status otomatis (maks ~12,5 menit), dan
   tombol *Konfirmasi Pembayaran* untuk paksa cek status.
