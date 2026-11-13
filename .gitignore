@@ -10,3 +10,4 @@ node_modules/
 .upm/
 .replit
 data/
+artifacts/

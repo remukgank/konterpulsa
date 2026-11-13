@@ -19,11 +19,6 @@ function escMd(s) {
   return String(s == null ? "" : s).replace(/([\\_*`[\]])/g, "\\$1");
 }
 
-/** Nilai web/user yang ditampilkan di parse_mode Markdown tanpa format. */
-function mdPlain(s) {
-  return escMd(String(s == null ? "" : s).replace(/\s+/g, " ").trim());
-}
-
 /**
  * Nilai yang ingin ditebalkan. Kalau mengandung karakter Markdown,
  * JANGAN dibungkus *...* (escaping di dalam entity tidak diizinkan oleh Bot API),
@@ -258,7 +253,6 @@ function confirmGate(opts) {
 module.exports = {
   escHtml,
   escMd,
-  mdPlain,
   mdEmphasize,
   fmt,
   chunk,

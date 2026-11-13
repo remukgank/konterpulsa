@@ -23,11 +23,11 @@
 
 ## Keamanan
 - Jangan commit cookie/token/secret. `.env` gitignored; secret hanya via environment/Replit Secrets.
-- Jangan menaruh `KONTER_COOKIE` di `ecosystem.config.js` (ter-track git).
+- Jangan menaruh secret di file ter-track git apa pun (config pm2 lama `ecosystem.config.js` sudah dihapus 13-11-2026).
 
 ## Deploy
-- **Runtime aktual: Replit workflow "KonterKuota"** → `npm install && node src/index.js` (lihat `.replit`). Bot TIDAK memakai pm2 secara default.
-- pm2 opsional (`pm2 start/restart ecosystem.config.js --update-env`) **hanya kalau memang dipakai** — cek `pm2 list` DULU.
+- **Runtime aktual: Replit workflow "KonterKuota"** → `npm install && node src/index.js` (lihat `.replit`). Bot TIDAK memakai pm2 (config `ecosystem.config.js` dihapus 13-11-2026: tak terpakai, `pm2 jlist` kosong [OBSERVED]).
+- Kalau suatu saat perlu pm2, buat config baru dari nol — jangan andalkan file lama.
 - **Jangan pernah menjalankan instance kedua**: 2 proses `getUpdates` → Telegram balas `409 Conflict` dan kedua bot saling kill. Sebelum restart: cek `ps aux | grep "node src/index.js"`.
 - Restart = matikan proses lama dengan rapi (SIGTERM → `gracefulShutdown`) lalu nyalakan yang baru; kalau lewat Replit, cukup restart workflow-nya.
 - Antes restart: cek dulu apakah sedang download / npm install / deploy lain berjalan (tunggu selesai) — **tanya user**.
