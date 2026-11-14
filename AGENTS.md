@@ -33,6 +33,7 @@
 - Antes restart: cek dulu apakah sedang download / npm install / deploy lain berjalan (tunggu selesai) — **tanya user**.
 - Env wajib: `TELEGRAM_BOT_TOKEN`, `KONTER_BASE_URL`, `KONTER_COOKIE`, `ALLOWED_CHAT_IDS` (Replit Secrets; `.env` opsional).
 - Opsional: `KONTER_PASSWORD` — kata sandi login web konter; dipakai bot untuk verifikasi kata sandi otomatis bila server memintanya saat order.
+- Opsional: `TELEGRAM_API_ROOT` — URL server Telegram Bot API (kosong = `https://api.telegram.org`). Di VPS dapat diset `http://localhost:9091` untuk mengaktifkan Local Bot API Server [DOCS: https://core.telegram.org/bots/api#using-a-local-bot-api-server]. Latensi editMessageText terpangkas dari ~431ms ke ~93ms.
 - Verifikasi setelah start: proses ada (`ps`), log tanpa error 409/Unauthorized, bot merespons (log `[MSG]`/`[CB]`).
 - Urutan wajib: **implement → test → deploy → verifikasi → commit + push + tag**. Jangan commit sebelum deploy terverifikasi.
 

@@ -1,7 +1,7 @@
 "use strict";
 
 const { Bot, InputFile } = require("grammy");
-const { BOT_TOKEN, ALLOWED_CHAT_IDS } = require("../src/config");
+const { BOT_TOKEN, TELEGRAM_API_ROOT, ALLOWED_CHAT_IDS } = require("../src/config");
 const { sanitizeButtonText, sanitizeCallbackData } = require("../src/util");
 
 let bot = null;
@@ -239,7 +239,11 @@ function initBot() {
   if (!BOT_TOKEN) {
     throw new Error("TELEGRAM_BOT_TOKEN belum diisi. Isi di env/.env lalu jalankan ulang.");
   }
-  const coreBot = new Bot(BOT_TOKEN);
+  const botOptions = {};
+  if (TELEGRAM_API_ROOT) {
+    botOptions.client = { apiRoot: TELEGRAM_API_ROOT };
+  }
+  const coreBot = new Bot(BOT_TOKEN, botOptions);
   core = coreBot;
   coreBot.catch((err) => {
     const e = err.error || err;

@@ -24,7 +24,14 @@ test("boot: smoke test entry loads with dummy token (exit before polling)", asyn
 
 test("boot: entry throws when TELEGRAM_BOT_TOKEN missing", async () => {
   const code = [
+    // Di mesin test lokal .env mungkin ada di disk; config.js akan membacanya
+    // kembali saat token dihapus dari env, sehingga bot tidak akan "throws".
+    // Stub fs.existsSync agar .env dianggap tidak ada — supaya tes ini deterministik
+    // di Replit (tanpa .env) maupun VPS (ada .env).
+    "const fs = require('fs'); const origExists = fs.existsSync;",
+    "fs.existsSync = (p) => (/\\.env$/.test(String(p)) ? false : origExists(p));",
     "delete process.env.TELEGRAM_BOT_TOKEN",
+    "delete process.env.KONTER_BASE_URL",
     "delete require.cache[require.resolve(" + JSON.stringify(ENTRY) + ")]",
     "try { require(" + JSON.stringify(ENTRY) + "); console.log('BOOT_OK'); } catch (e) { console.log('THREW:' + e.message); process.exitCode = 1; }",
   ].join(";");

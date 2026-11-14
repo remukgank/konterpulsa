@@ -1379,6 +1379,18 @@ bot.on("callback_query", (q) => {
   const data = q.data || "";
   const st = getState(chatId);
 
+  // Ack SEDINI MUNGKIN. Telegram menahan ikon loading di tombol sampai
+  // answerCallbackQuery diterima; kalau baru dijawab di blok finally (setelah
+  // editMessageText ~400ms, atau sampai 10s saat koneksi ke api.telegram.org
+  // macet), tombol terlihat menggantung. Dikecualikan: "konfirm:", karena
+  // handler-nya bisa mengirim toast lewat ackWithToast() dan satu callback
+  // query hanya boleh dijawab sekali [DOCS answerCallbackQuery].
+  let acked = false;
+  if (!data.startsWith("konfirm:")) {
+    acked = true;
+    bot.answerCallbackQuery(q.id).catch(() => {});
+  }
+
   (async () => {
     try {
       const FLOW_CB = ["cat:", "submenu:", "brand:", "op:", "vch:", "vchp:", "pay:", "order:cancel"];
@@ -1468,11 +1480,12 @@ bot.on("callback_query", (q) => {
     }
     return reply(q.message, "Perintah tidak dikenal.");
     } finally {
-      // Callback wajib selalu dijawab. Handler yang sudah menjawab sendiri (toast)
-      // ditandai di ACKED_QUERIES agar tidak terjadi ack ganda [DOCS answerCallbackQuery].
+      // Net pengaman: ack akhir hanya bila handler BELUM menjawab sendiri
+      // (toast via ackWithToast) dan BELUM di-ack sedini mungkin di atas,
+      // supaya tidak ada double answerCallbackQuery [DOCS answerCallbackQuery].
       const qid = String(q.id);
       if (ACKED_QUERIES.has(qid)) ACKED_QUERIES.delete(qid);
-      else bot.answerCallbackQuery(q.id).catch(() => {});
+      else if (!acked) bot.answerCallbackQuery(q.id).catch(() => {});
     }
   })().catch((e) => reply(q.message, "Error: " + e.message));
 });
