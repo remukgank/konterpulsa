@@ -81,6 +81,15 @@ function createCompatibilityAdapter(coreBot) {
       );
     },
 
+    /* [SDK/SPEC] grammY 1.46.0: editMessageCaption(chat_id, message_id, other?)
+     * -> caption HARUS di dalam objek `other`, bukan argumen posisional. */
+    editMessageCaption(chatId, messageId, caption, options = {}) {
+      return callWith429Retry(
+        () => coreBot.api.editMessageCaption(chatId, messageId, { caption, ...options }),
+        "editMessageCaption"
+      );
+    },
+
     sendRichMessage(chatId, html, fallback, options = {}) {
       const payload = { chat_id: chatId, rich_message: { html } };
       if (options.reply_markup) payload.reply_markup = options.reply_markup;
@@ -310,8 +319,11 @@ function inlineButtons(rows) {
       }
       const rawData = b.data;
       const data = sanitizeCallbackData(rawData);
-      if (data === "noop" && String(rawData == null ? "" : rawData)) {
-        console.warn("[KB] callback_data invalid/terlalu panjang -> noop:", JSON.stringify(rawData).slice(0, 120));
+      // "noop" sengaja dipakai tombol penanda halaman (index.js:1580), jangan
+      // dianggap error. Yang perlu diperingatkan adalah data yang benar-benar
+      // hilang — tombol tersebut tidak akan merespons saat ditekan.
+      if (rawData == null || String(rawData) === "") {
+        console.warn("[KB] callback_data kosong -> noop (tombol pasif):", JSON.stringify(b.text));
       }
       out.push({ text, callback_data: data });
     }

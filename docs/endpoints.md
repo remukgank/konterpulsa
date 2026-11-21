@@ -201,3 +201,37 @@ Klien HTTP menggunakan modul `src/konterApi.js` dengan persistensi cookie sessio
 - **Status Keyakinan**: [OBSERVED: HTTP 200/302]
 - **Auth**: Membutuhkan `KONTER_COOKIE`.
 - **Tujuan**: Trigger webhook / pengecekan manual status pelunasan pembayaran pihak ketiga.
+
+---
+
+## 3. Tambahan discovery 21-11-2026 — lifecycle pesan QRIS
+
+### 3.1 `POST /bot<token>/editMessageCaption`
+- **Method**: `POST` (`application/json`)
+- **Status Keyakinan**: [DOCS https://core.telegram.org/bots/api#editmessagecaption] + [SDK/SPEC grammY 1.46.0 `node_modules/grammy/out/core/api.d.ts:1353`] + [OBSERVED]
+- **Header penting**: `Content-Type: application/json`; token di path (secret di-redact).
+- **Payload contoh** (token & id disensor):
+  ```json
+  {
+    "chat_id": 1170158500,
+    "message_id": "<id_foto_qr>",
+    "caption": "✅ *Pembayaran #5353923 sudah dikonfirmasi.*\nQRIS tidak perlu dipindai lagi.",
+    "parse_mode": "Markdown",
+    "reply_markup": { "inline_keyboard": [] }
+  }
+  ```
+- **Response sukses [DOCS]**: `{"ok":true,"result":<Message>}` (atau `true` untuk inline message).
+- **Response error [OBSERVED]**: probe dengan `message_id=999999999` ke `http://localhost:9091/bot<redacted>/editMessageCaption` → `{"ok":false,"error_code":400,"description":"Bad Request: message to edit not found"}` (membuktikan method dikenal & ter-routing, bukan `method not found`).
+- **Efek**: caption foto QR berubah; `reply_markup: {"inline_keyboard":[]}` menghapus tombol "Konfirmasi Pembayaran" [DOCS].
+- **Jebakan SDK [SDK/SPEC]**: signature grammY `editMessageCaption(chat_id, message_id, other?, signal?)` — `caption` **harus** di dalam objek `other`, bukan argumen posisional ke-3. Adapter di `bot/telegram.js` sudah membungkusnya.
+- **Dipakai di**: `src/qrMessage.js` (`finalize`), dipanggil dari konfirmasi tombol, polling QRIS, dan notifikasi situs.
+
+### 3.2 `POST /bot<token>/editMessageReplyMarkup`
+- **Method**: `POST` (`application/json`)
+- **Status Keyakinan**: [DOCS https://core.telegram.org/bots/api#editmessagereplymarkup] + [SDK/SPEC grammY 1.46.0 `out/core/api.d.ts:1397`] + [OBSERVED: 400 "message to edit not found" pada probe `message_id=999999999`]
+- **Payload contoh**: `{"chat_id":1170158500,"message_id":"<id>","reply_markup":{"inline_keyboard":[]}}`
+- **Efek**: mengubah hanya keyboard tanpa menyentuh caption. **Tidak dipakai** di kode produksi (cukup `editMessageCaption` yang menerima `reply_markup`), dicatat untuk referensi.
+
+### 3.3 Catatan `deleteMessage` [DOCS https://core.telegram.org/bots/api#deletemessage]
+- Pesan hanya bisa dihapus jika dikirim **< 48 jam** lalu; bot bisa menghapus pesan keluarannya di chat privat/grup/supergroup.
+- Karena pembatasan ini, lifecycle QRIS memilih **edit caption + hapus keyboard** (tidak menghapus pesan), agar riwayat tetap ada dan tidak gagal pada transaksi lama.

@@ -60,3 +60,8 @@ Label wajib tiap klaim: **[DOCS]** (URL+method), **[SDK/SPEC]** (repo/file/versi
 - Callback tombol WAJIB selalu di-ack (termasuk saat rate-limited) supaya loading tidak menggantung.
 - Jangan membalas tiap pesan yang di-rate-limit (hindari spam); log saja.
 - Web konter: defensif retry singkat untuk status transient (429/502/503) dengan backoff kecil.
+
+## Catatan runtime aktual (append 21-11-2026 — [OBSERVED])
+- Bagian "Deploy" di atas menyebut Replit workflow "KonterKuota" dan "bot tidak pakai pm2". Fakta di VPS pada 21-11-2026: `@konterpulsabot` dijalankan via PM2 `konterpulsa-bot` dengan cwd `/root/konterpulsa`. `@konterkuotacombot` adalah **bot berbeda** (token beda) di PM2 `konter-bot`, cwd `/root/konterkuota` — jangan disamakan.
+- `.env` konterpulsa menyetel `TELEGRAM_API_ROOT=http://localhost:9091` (Local Bot API Server via PM2 `telegram-local-api`), bukan `api.telegram.org`.
+- Sebelum restart selalu cek `pm2 list` dan `ps aux | grep "node src/index.js"`. Dilarang menjalankan instance kedua untuk token yang sama (risiko 409 Conflict).

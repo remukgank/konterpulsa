@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const { konfirmHttpHint, confirmGate } = require("../src/util");
+const { createQrMessageTracker } = require("../src/qrMessage");
 
 /* ---------- kalimat status konfirmasi (bukan kode HTTP mentah) ---------- */
 
@@ -82,6 +83,7 @@ function makeContext() {
   };
   const context = vm.createContext({
     bot,
+    createQrMessageTracker, // dipakai cuplikan STATUS_MSG di index.js
     reply: async (msg, text, opts) => {
       calls.replies.push({ chatId: msg.chat.id, text, opts });
       return { message_id: nextId++ };

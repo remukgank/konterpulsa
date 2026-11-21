@@ -16,6 +16,7 @@ const path = require("path");
 const os = require("os");
 
 const { fmt, escHtml, escMd, statusIcon, isPendingStatus, tgTimeCell, checkNomorPrefix, formatHargaCompact, voucherBtnLabel } = util;
+const { createQrMessageTracker } = require("./qrMessage");
 
 const bot = initBot();
 
@@ -53,6 +54,7 @@ function cleanupStates() {
       states.delete(chatId);
     }
   }
+  qrMessages.prune(now);
 }
 
 setInterval(cleanupStates, STATE_CLEANUP_INTERVAL);
@@ -241,13 +243,36 @@ const CONFIRM_STATE = new Map();
 const ACKED_QUERIES = new Set();
 const STATUS_TTL_MS = 24 * 60 * 60 * 1000;
 
+/* Foto QR punya lifecycle sendiri: disimpan saat dikirim, caption-nya diubah
+ * dan tombol konfirmasinya dihapus begitu transaksi mencapai status akhir. */
+const qrMessages = createQrMessageTracker(bot, { log: (...a) => console.log(...a) });
+
 function statusKey(chatId, trx) {
   return String(chatId) + ":" + String(trx);
+}
+
+function trackQr(chatId, trx, sent) {
+  const msgId = qrMessages.track(chatId, trx, sent);
+  if (msgId) console.log("[QRMSG] simpan foto QR #" + trx + " chat=" + chatId + " msg=" + msgId);
+  return msgId;
+}
+
+function finalizeQr(chatId, trx, caption) {
+  return qrMessages.finalize(chatId, trx, caption);
+}
+
+function qrPaidCaption(trx) {
+  return "✅ *Pembayaran #" + trx + " sudah dikonfirmasi.*\nQRIS tidak perlu dipindai lagi. Cek /riwayat untuk detail.";
+}
+
+function qrClosedCaption(trx) {
+  return "⚠️ *Transaksi #" + trx + " sudah tidak aktif.*\nQRIS dibatalkan. Cek /riwayat untuk status terakhir.";
 }
 
 function pruneStatusState(now) {
   for (const [k, v] of STATUS_MSG) if (now - v.at > STATUS_TTL_MS) STATUS_MSG.delete(k);
   for (const [k, v] of CONFIRM_STATE) if (now - v.at > STATUS_TTL_MS) CONFIRM_STATE.delete(k);
+  qrMessages.prune(now);
 }
 
 /* Jawab callback query sekaligus tampilkan toast. Dipakai untuk kasus yang
@@ -362,12 +387,14 @@ async function qrisTick(chatId, entry) {
             : "✅ *Pembayaran diterima & pengisian sukses!*\nTrx *#" + entry.trx + "*\nStatus: " + stNow
         );
         if (res && res.msgId) bot.setMessageReaction(chatId, res.msgId, "👍").catch(() => {});
+        await finalizeQr(chatId, entry.trx, qrPaidCaption(entry.trx));
         clearTimeout(entry.timer);
         delete QRIS_POLLS[chatId];
         return;
       }
       if (/batal|dibatalkan|gagal/i.test(stNow)) {
         await updateStatusOnce(chatId, entry.trx, "⚠️ Trx *#" + entry.trx + "* dibatalkan/gagal.\nStatus: " + stNow);
+        await finalizeQr(chatId, entry.trx, qrClosedCaption(entry.trx));
         clearTimeout(entry.timer);
         delete QRIS_POLLS[chatId];
         return;
@@ -866,6 +893,10 @@ async function pollNotifikasi() {
     // Satu pesan status per transaksi: notifikasi situs meng-edit pesan status
     // yang sama (bukan menambah pesan baru). Dedupe id notifikasi sudah di atas.
     updateStatusOnce(entry.chat, tm[1], text, { parse_mode: "HTML" }).catch(() => {});
+    // Notifikasi situs bisa mendahului polling/konfirmasi tombol — tutup QR juga.
+    if (/SUKSES|berhasil/i.test(n.teks)) {
+      await finalizeQr(entry.chat, tm[1], qrPaidCaption(tm[1]));
+    }
     console.log("[NOTIF] push trx #" + tm[1] + " -> chat " + entry.chat);
   }
 }
@@ -970,11 +1001,12 @@ async function handleDepPay(chatId, msg, st, methodKey) {
     : `Jumlah: ${formatHarga(amount)}\nMetode: ${mlabel}`;
   if (res.qr && res.qr.ok && res.qr.buffer) {
     const big = await upscalePng(res.qr.buffer, 1024);
-    await bot.sendPhoto(chatId, big || res.qr.buffer, {
+    const depositQrSent = await bot.sendPhoto(chatId, big || res.qr.buffer, {
       caption: `🧾 *Scan & bayar Deposit #${res.id}*\n${info}\n\nScan QR, bayar, lalu tekan *Konfirmasi Pembayaran*. Bot akan mengabari begitu lunas.`,
       parse_mode: "Markdown",
       ...inlineButtons(confirmButton(res.id)),
     });
+    trackQr(chatId, res.id, depositQrSent);
     startQrisPoll(chatId, res.id);
     return;
   }
@@ -1219,18 +1251,20 @@ async function doKirimQr(msg, trx) {
   const s = await buildQrSet(id, entry);
   if (!s.buffer) return spin.fail("QR belum tersedia: " + (s.error || "belum ada sesi pembayaran."));
 
-  await spin.finishPhoto(s.buffer, {
+  const adminQrSent = await spin.finishPhoto(s.buffer, {
     caption: "🖼️ *QR Pembayaran QRIS*\n" + s.info + "\n\nScan QR, bayar, lalu tekan tombol konfirmasi. Status dipantau otomatis.",
     parse_mode: "Markdown",
     ...inlineButtons(confirmButton(id)),
   });
+  trackQr(chatId, id, adminQrSent);
   const target = entry ? Number(entry.chat) : chatId;
   if (target !== chatId) {
-    await bot.sendPhoto(target, s.buffer, {
+    const buyerQrSent = await bot.sendPhoto(target, s.buffer, {
       caption: "🧾 *Scan & bayar QRIS*\n" + s.buyer + "\n\nScan QR, bayar, lalu tekan *Konfirmasi Pembayaran*. Bot akan mengabari begitu lunas.",
       parse_mode: "Markdown",
       ...inlineButtons(confirmButton(id)),
-    }).catch(() => {});
+    }).catch(() => null);
+    trackQr(target, id, buyerQrSent);
   }
   if (isOngoing(target)) {
     return reply(msg, "QR #" + id + " terkirim. Polling untuk pengguna itu sudah berjalan.");
@@ -1319,6 +1353,9 @@ async function handleKonfirm(chatId, msg, trx, q) {
   const target = entry ? Number(entry.chat) : chatId;
   if (/sukses/i.test(st)) {
     if (res && res.msgId) bot.setMessageReaction(chatId, res.msgId, "👍").catch(() => {});
+    // Tutup foto QR di chat yang menekan DAN di chat pemilik transaksi.
+    await finalizeQr(chatId, id, qrPaidCaption(id));
+    if (target !== chatId) await finalizeQr(target, id, qrPaidCaption(id));
     if (target !== chatId) {
       await updateStatusOnce(
         target,
@@ -1845,11 +1882,12 @@ async function doSubmit(chatId, msg, st, opts = {}) {
       chatAction(chatId, "upload_photo");
       const s = await buildQrSet(id, null);
       if (s.buffer) {
-        await bot.sendPhoto(chatId, s.buffer, {
+        const orderQrSent = await bot.sendPhoto(chatId, s.buffer, {
           caption: "🧾 *Scan & bayar QRIS*\n" + s.buyer + "\n\nScan QR, bayar, lalu tekan *Konfirmasi Pembayaran*. Bot akan mengabari begitu lunas.",
           parse_mode: "Markdown",
           ...inlineButtons(confirmButton(id)),
         });
+        trackQr(chatId, id, orderQrSent);
         startQrisPoll(chatId, id);
       } else {
         await reply({ chat: { id: chatId } }, "Order dibuat (#" + id + "). QR belum tersedia saat ini: " + (s.error || "cek /riwayat"), { parse_mode: "Markdown" });
